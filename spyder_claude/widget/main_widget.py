@@ -307,6 +307,7 @@ class ClaudeMainWidget(PluginMainWidget):
     def _run_query(self, prompt: str):
         if self._thread.isRunning():
             return
+        self._thread.wait()  # ensure fully stopped before restarting
 
         api_key = self.get_conf("api_key", default="")
         claude_path = self.get_conf("claude_path", default="")

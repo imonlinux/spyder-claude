@@ -26,7 +26,7 @@ pip install spyder-claude
 
 To install from source, replace `spyder-claude` with the path to a cloned copy:
 ```bash
-git clone https://github.com/YOUR_USERNAME/spyder-claude.git
+git clone https://github.com/imonlinux/spyder-claude.git
 # then substitute the path above, e.g.:
 flatpak run --command=python3 org.spyder_ide.spyder -m pip install -e ./spyder-claude
 ```
