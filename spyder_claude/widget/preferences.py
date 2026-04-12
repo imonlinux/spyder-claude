@@ -22,6 +22,8 @@ class ClaudeConfigPage(PluginConfigPage):
             "api_key",
             tip=_(
                 "Your Anthropic API key. "
+                "Leave blank if you are already authenticated with the claude CLI "
+                "(e.g. via 'claude login'). "
                 "Stored in Spyder's local configuration file."
             ),
         )

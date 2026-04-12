@@ -63,6 +63,10 @@ class SpyderClaude(SpyderDockablePlugin):
     def on_preferences_teardown(self):
         preferences = self.get_plugin(Plugins.Preferences)
         preferences.deregister_plugin_preferences(self)
+        widget = self.get_widget()
+        if widget is not None and widget._thread.isRunning():
+            widget._thread.quit()
+            widget._thread.wait(3000)
 
     # ---- Private API -------------------------------------------------------
 

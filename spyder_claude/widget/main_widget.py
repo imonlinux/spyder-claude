@@ -9,10 +9,12 @@ import os
 import subprocess
 
 from qtpy.QtCore import QObject, QThread, Qt, Signal, Slot
+from qtpy.QtGui import QKeySequence
 from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QShortcut,
     QSplitter,
     QTextEdit,
     QVBoxLayout,
@@ -243,6 +245,10 @@ class ClaudeMainWidget(PluginMainWidget):
         self._send_file_btn.clicked.connect(self._on_send_with_file_clicked)
         self._new_chat_btn.clicked.connect(self._on_new_chat)
         self._clear_btn.clicked.connect(self._response_area.clear)
+
+        # --- Keyboard shortcuts ---
+        send_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self._input_area)
+        send_shortcut.activated.connect(self._on_send_clicked)
 
         # --- Session state ---
         self._session_id = ""
