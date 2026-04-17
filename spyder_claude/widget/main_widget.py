@@ -291,12 +291,14 @@ class ClaudeMainWidget(PluginMainWidget):
         prompt = self._input_area.toPlainText().strip()
         if prompt:
             self._run_query(prompt)
+            self._input_area.clear()
 
     def _on_send_with_file_clicked(self):
         prompt = self._input_area.toPlainText().strip()
         if not prompt:
             return
         self._pending_prompt = prompt
+        self._input_area.clear()
         self.sig_editor_content_requested.emit()
 
     def _on_new_chat(self):
