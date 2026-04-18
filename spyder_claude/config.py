@@ -12,6 +12,7 @@ CONF_DEFAULTS = [
         CONF_SECTION,
         {
             "api_key": "",
+            "base_url": "https://api.anthropic.com",
             "claude_path": "",
             "model": "sonnet",
             "system_prompt": "",

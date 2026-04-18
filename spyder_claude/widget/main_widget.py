@@ -43,6 +43,7 @@ class _ClaudeWorker(QObject):
         super().__init__(parent)
         self._prompt = ""
         self._api_key = ""
+        self._base_url = "https://api.anthropic.com"
         self._claude_path = ""
         self._model = "sonnet"
         self._system_prompt = ""
@@ -52,6 +53,7 @@ class _ClaudeWorker(QObject):
         self,
         prompt: str,
         api_key: str,
+        base_url: str,
         claude_path: str,
         model: str,
         system_prompt: str,
@@ -59,6 +61,7 @@ class _ClaudeWorker(QObject):
     ):
         self._prompt = prompt
         self._api_key = api_key
+        self._base_url = base_url
         self._claude_path = claude_path
         self._model = model
         self._system_prompt = system_prompt
@@ -96,6 +99,8 @@ class _ClaudeWorker(QObject):
         env = os.environ.copy()
         if self._api_key:
             env["ANTHROPIC_API_KEY"] = self._api_key
+        if self._base_url:
+            env["ANTHROPIC_BASE_URL"] = self._base_url
 
         try:
             proc = subprocess.Popen(
@@ -312,12 +317,13 @@ class ClaudeMainWidget(PluginMainWidget):
         self._thread.wait()  # ensure fully stopped before restarting
 
         api_key = self.get_conf("api_key", default="")
+        base_url = self.get_conf("base_url", default="https://api.anthropic.com")
         claude_path = self.get_conf("claude_path", default="")
         model = self.get_conf("model", default="sonnet")
         system_prompt = self.get_conf("system_prompt", default="")
 
         self._worker.configure(
-            prompt, api_key, claude_path, model, system_prompt, self._session_id
+            prompt, api_key, base_url, claude_path, model, system_prompt, self._session_id
         )
 
         preview = prompt[:120].replace("\n", " ")

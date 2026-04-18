@@ -4,7 +4,7 @@
 
 """Preferences page for spyder-claude."""
 
-from qtpy.QtWidgets import QGroupBox, QLineEdit, QVBoxLayout
+from qtpy.QtWidgets import QGroupBox, QLineEdit, QVBoxLayout, QWidget
 
 from spyder.api.preferences import PluginConfigPage
 from spyder.api.translations import _
@@ -29,8 +29,19 @@ class ClaudeConfigPage(PluginConfigPage):
         )
         api_key_widget.textbox.setEchoMode(QLineEdit.Password)
 
+        base_url_widget = self.create_lineedit(
+            _("API base URL"),
+            "base_url",
+            tip=_(
+                "Base URL for the API endpoint. "
+                "Default: https://api.anthropic.com. "
+                "Use alternative providers like z.ai by changing this."
+            ),
+        )
+
         auth_layout = QVBoxLayout()
         auth_layout.addWidget(api_key_widget)
+        auth_layout.addWidget(base_url_widget)
         auth_group.setLayout(auth_layout)
 
         # ---- Claude CLI ----------------------------------------------------
@@ -52,15 +63,15 @@ class ClaudeConfigPage(PluginConfigPage):
         # ---- Model selection -----------------------------------------------
         model_group = QGroupBox(_("Model"))
 
-        model_widget = self.create_combobox(
-            _("Claude model"),
-            [
-                ("Claude Opus 4.6 (most capable)", "opus"),
-                ("Claude Sonnet 4.6 (balanced)", "sonnet"),
-                ("Claude Haiku 4.5 (fastest)", "haiku"),
-            ],
+        model_widget = self.create_lineedit(
+            _("Model name"),
             "model",
-            tip=_("Which Claude model to use for queries."),
+            tip=_(
+                "Model name to use for queries. "
+                "Anthropic: opus, sonnet, haiku. "
+                "z.ai: zai:glm-5.1, zai:glm-4.5. "
+                "Enter any model name supported by your API provider."
+            ),
         )
 
         model_layout = QVBoxLayout()

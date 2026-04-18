@@ -48,8 +48,9 @@ Open **Tools → Preferences → Claude** and set:
 | Setting | Description |
 |---|---|
 | Anthropic API key | Your API key (stored locally, masked in UI). Leave blank if you use `claude login`. |
+| API base URL | Base URL for the API endpoint. Default: `https://api.anthropic.com`. Use alternative providers like z.ai by changing this. |
 | Path to claude binary | Full path to the `claude` executable, e.g. `/home/user/.npm-global/bin/claude` |
-| Model | `sonnet` (default), `opus`, or `haiku` |
+| Model name | Model name to use. Anthropic: `opus`, `sonnet`, `haiku`. z.ai: `zai:glm-5.1`, `zai:glm-4.5`. Enter any model name supported by your provider. |
 | System prompt | Optional text appended to Claude's default system prompt |
 
 ## Usage
@@ -75,7 +76,7 @@ flatpak-spawn --host <claude_path> -p --verbose \
   "<user prompt>"
 ```
 
-The plugin parses the `stream-json` event stream to display text incrementally, surface tool calls, and capture the session ID for conversation continuity.
+The plugin sets the `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` environment variables as needed, then parses the `stream-json` event stream to display text incrementally, surface tool calls, and capture the session ID for conversation continuity.
 
 ## License
 
