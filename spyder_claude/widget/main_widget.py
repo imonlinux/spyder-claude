@@ -7,6 +7,7 @@
 import json
 import os
 import subprocess
+import threading
 
 from qtpy.QtCore import QObject, QThread, Qt, Signal, Slot
 from qtpy.QtGui import QKeySequence
@@ -48,6 +49,8 @@ class _ClaudeWorker(QObject):
         self._model = "sonnet"
         self._system_prompt = ""
         self._session_id = ""
+        self._proc = None
+        self._cancelled = False
 
     def configure(
         self,
@@ -68,7 +71,18 @@ class _ClaudeWorker(QObject):
         self._session_id = session_id
 
     @Slot()
+    def cancel(self):
+        self._cancelled = True
+        proc = self._proc
+        if proc is not None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    @Slot()
     def run(self):
+        self._cancelled = False
         claude = self._claude_path.strip() or "claude"
 
         # Inside a Flatpak sandbox the claude binary lives on the host, so we
@@ -110,7 +124,18 @@ class _ClaudeWorker(QObject):
                 env=env,
                 bufsize=0,
             )
+            self._proc = proc
             with proc:
+                stderr_chunks: list[bytes] = []
+
+                def _drain_stderr():
+                    stderr_chunks.append(proc.stderr.read())
+
+                stderr_thread = threading.Thread(
+                    target=_drain_stderr, daemon=True
+                )
+                stderr_thread.start()
+
                 buf = b""
 
                 while True:
@@ -127,8 +152,13 @@ class _ClaudeWorker(QObject):
                             )
 
                 proc.wait()
-                if proc.returncode != 0:
-                    err = proc.stderr.read().decode("utf-8", errors="replace").strip()
+                stderr_thread.join()
+                if proc.returncode != 0 and not self._cancelled:
+                    err = (
+                        stderr_chunks[0].decode("utf-8", errors="replace").strip()
+                        if stderr_chunks
+                        else ""
+                    )
                     self.sig_error.emit(
                         err or f"claude exited with code {proc.returncode}"
                     )
@@ -151,6 +181,7 @@ class _ClaudeWorker(QObject):
         except Exception as exc:
             self.sig_error.emit(str(exc))
         finally:
+            self._proc = None
             self.sig_finished.emit()
 
     def _handle_event(self, line: str):
@@ -217,12 +248,15 @@ class ClaudeMainWidget(PluginMainWidget):
 
         self._send_btn = QPushButton(_("Send"), self)
         self._send_file_btn = QPushButton(_("Send with current file"), self)
+        self._cancel_btn = QPushButton(_("Cancel"), self)
+        self._cancel_btn.setEnabled(False)
         self._new_chat_btn = QPushButton(_("New Chat"), self)
         self._clear_btn = QPushButton(_("Clear"), self)
 
         btn_row = QHBoxLayout()
         btn_row.addWidget(self._send_btn)
         btn_row.addWidget(self._send_file_btn)
+        btn_row.addWidget(self._cancel_btn)
         btn_row.addStretch()
         btn_row.addWidget(self._new_chat_btn)
         btn_row.addWidget(self._clear_btn)
@@ -248,6 +282,7 @@ class ClaudeMainWidget(PluginMainWidget):
         # --- Button connections ---
         self._send_btn.clicked.connect(self._on_send_clicked)
         self._send_file_btn.clicked.connect(self._on_send_with_file_clicked)
+        self._cancel_btn.clicked.connect(self._on_cancel_clicked)
         self._new_chat_btn.clicked.connect(self._on_new_chat)
         self._clear_btn.clicked.connect(self._response_area.clear)
 
@@ -270,7 +305,7 @@ class ClaudeMainWidget(PluginMainWidget):
         self._worker.sig_tool_use.connect(self._on_tool_use)
         self._worker.sig_session_id.connect(self._on_session_id)
         self._worker.sig_finished.connect(self._thread.quit)
-        self._worker.sig_finished.connect(lambda: self._set_busy(False))
+        self._worker.sig_finished.connect(self._on_worker_finished)
 
     def update_actions(self):
         pass
@@ -290,15 +325,26 @@ class ClaudeMainWidget(PluginMainWidget):
         self._pending_prompt = ""
         self._run_query(prompt)
 
+    def shutdown(self):
+        """Stop any running query and clean up the worker thread."""
+        if self._thread.isRunning():
+            self._worker.cancel()
+            self._thread.quit()
+            self._thread.wait(3000)
+
     # ---- Private helpers ---------------------------------------------------
 
     def _on_send_clicked(self):
+        if self._thread.isRunning():
+            return
         prompt = self._input_area.toPlainText().strip()
         if prompt:
             self._run_query(prompt)
             self._input_area.clear()
 
     def _on_send_with_file_clicked(self):
+        if self._thread.isRunning():
+            return
         prompt = self._input_area.toPlainText().strip()
         if not prompt:
             return
@@ -334,14 +380,12 @@ class ClaudeMainWidget(PluginMainWidget):
         if self._session_id:
             header += _("[continuing conversation]\n")
         header += f"> {preview}\n\n"
-        self._response_area.append(header)
+        self._append_text(header)
 
         self._set_busy(True)
         self._thread.start()
 
-    @Slot(str)
-    def _on_chunk(self, text: str):
-        """Append a streaming text chunk to the response area."""
+    def _append_text(self, text: str):
         cursor = self._response_area.textCursor()
         cursor.movePosition(cursor.End)
         cursor.insertText(text)
@@ -349,9 +393,12 @@ class ClaudeMainWidget(PluginMainWidget):
         self._response_area.ensureCursorVisible()
 
     @Slot(str)
+    def _on_chunk(self, text: str):
+        self._append_text(text)
+
+    @Slot(str)
     def _on_tool_use(self, tool_name: str):
-        """Show a tool-call indicator when Claude calls an MCP tool."""
-        self._response_area.append(f"\n[tool: {tool_name}]")
+        self._append_text(f"\n[tool: {tool_name}]")
 
     @Slot(str)
     def _on_session_id(self, session_id: str):
@@ -360,9 +407,18 @@ class ClaudeMainWidget(PluginMainWidget):
 
     @Slot(str)
     def _on_error(self, message: str):
-        self._response_area.append(f"\n[Error] {message}")
+        self._append_text(f"\n[Error] {message}")
+
+    @Slot()
+    def _on_worker_finished(self):
+        self._set_busy(False)
+
+    @Slot()
+    def _on_cancel_clicked(self):
+        self._worker.cancel()
 
     def _set_busy(self, busy: bool):
         self._send_btn.setEnabled(not busy)
         self._send_file_btn.setEnabled(not busy)
+        self._cancel_btn.setEnabled(busy)
         self._send_btn.setText(_("Running…") if busy else _("Send"))

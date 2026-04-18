@@ -4,7 +4,9 @@
 
 """Preferences page for spyder-claude."""
 
-from qtpy.QtWidgets import QGroupBox, QLineEdit, QVBoxLayout, QWidget
+import os
+
+from qtpy.QtWidgets import QGroupBox, QLineEdit, QVBoxLayout
 
 from spyder.api.preferences import PluginConfigPage
 from spyder.api.translations import _
@@ -24,7 +26,8 @@ class ClaudeConfigPage(PluginConfigPage):
                 "Your Anthropic API key. "
                 "Leave blank if you are already authenticated with the claude CLI "
                 "(e.g. via 'claude login'). "
-                "Stored in Spyder's local configuration file."
+                "WARNING: stored in plaintext in Spyder's local configuration "
+                "file — prefer 'claude login' for better security."
             ),
         )
         api_key_widget.textbox.setEchoMode(QLineEdit.Password)
@@ -37,6 +40,10 @@ class ClaudeConfigPage(PluginConfigPage):
                 "Default: https://api.anthropic.com. "
                 "Use alternative providers like z.ai by changing this."
             ),
+            validate_callback=lambda url: not url or url.startswith(
+                ("http://", "https://")
+            ),
+            validate_reason=_("Base URL must start with http:// or https://"),
         )
 
         auth_layout = QVBoxLayout()
@@ -54,6 +61,8 @@ class ClaudeConfigPage(PluginConfigPage):
                 "Full path to the claude executable on the host system. "
                 "Example: /home/user/.npm-global/bin/claude"
             ),
+            validate_callback=lambda path: not path or os.path.isfile(path),
+            validate_reason=_("No file found at this path"),
         )
 
         cli_layout = QVBoxLayout()

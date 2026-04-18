@@ -4,7 +4,7 @@
 
 """SpyderClaude dockable plugin."""
 
-from qtpy.QtGui import QIcon
+import logging
 
 from spyder.api.plugin_registration.decorators import (
     on_plugin_available,
@@ -12,10 +12,13 @@ from spyder.api.plugin_registration.decorators import (
 )
 from spyder.api.plugins import Plugins, SpyderDockablePlugin
 from spyder.api.translations import _
+from spyder.utils.icon_manager import ima
 
 from .config import CONF_DEFAULTS, CONF_SECTION, CONF_VERSION
 from .widget.main_widget import ClaudeMainWidget
 from .widget.preferences import ClaudeConfigPage
+
+logger = logging.getLogger(__name__)
 
 
 class SpyderClaude(SpyderDockablePlugin):
@@ -44,7 +47,7 @@ class SpyderClaude(SpyderDockablePlugin):
 
     @staticmethod
     def get_icon():
-        return QIcon()
+        return ima.icon("comment")
 
     def on_initialize(self):
         widget = self.get_widget()
@@ -63,10 +66,11 @@ class SpyderClaude(SpyderDockablePlugin):
     def on_preferences_teardown(self):
         preferences = self.get_plugin(Plugins.Preferences)
         preferences.deregister_plugin_preferences(self)
+
+    def on_close(self, cancelable=False):
         widget = self.get_widget()
-        if widget is not None and widget._thread.isRunning():
-            widget._thread.quit()
-            widget._thread.wait(3000)
+        if widget is not None:
+            widget.shutdown()
 
     # ---- Private API -------------------------------------------------------
 
@@ -83,6 +87,6 @@ class SpyderClaude(SpyderDockablePlugin):
                     content = current_editor.toPlainText()
                     filename = editor.get_current_filename()
             except Exception:
-                pass
+                logger.exception("Failed to fetch active editor content")
 
         self.get_widget().inject_editor_content(content, filename)
