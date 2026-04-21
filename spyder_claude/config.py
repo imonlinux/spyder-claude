@@ -11,6 +11,7 @@ CONF_DEFAULTS = [
     (
         CONF_SECTION,
         {
+            "use_cli": True,
             "api_key": "",
             "base_url": "https://api.anthropic.com",
             "claude_path": "",

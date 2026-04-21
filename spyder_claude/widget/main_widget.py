@@ -9,6 +9,7 @@ import os
 import subprocess
 import threading
 
+from anthropic import Anthropic
 from qtpy.QtCore import QObject, QThread, Qt, Signal, Slot
 from qtpy.QtGui import QKeySequence
 from qtpy.QtWidgets import (
@@ -26,6 +27,85 @@ from spyder.api.translations import _
 from spyder.api.widgets.main_widget import PluginMainWidget
 
 
+class _ClaudeAPIWorker(QObject):
+    """Worker for direct Anthropic API calls using the SDK."""
+
+    sig_chunk = Signal(str)       # incremental text to append to response area
+    sig_error = Signal(str)       # error message
+    sig_finished = Signal()       # run complete
+    sig_tool_use = Signal(str)    # tool name each time Claude calls a tool
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._prompt = ""
+        self._api_key = ""
+        self._base_url = "https://api.anthropic.com"
+        self._model = "claude-sonnet-4-6"
+        self._system_prompt = ""
+        self._cancelled = False
+        self._client = None
+
+    def configure(
+        self,
+        prompt: str,
+        api_key: str,
+        base_url: str,
+        model: str,
+        system_prompt: str,
+    ):
+        self._prompt = prompt
+        self._api_key = api_key
+        self._base_url = base_url
+        self._model = model
+        self._system_prompt = system_prompt
+
+    @Slot()
+    def cancel(self):
+        self._cancelled = True
+
+    @Slot()
+    def run(self):
+        self._cancelled = False
+
+        if not self._api_key:
+            self.sig_error.emit("API key is required for API mode")
+            self.sig_finished.emit()
+            return
+
+        try:
+            # Initialize the Anthropic client
+            if self._base_url:
+                self._client = Anthropic(api_key=self._api_key, base_url=self._base_url)
+            else:
+                self._client = Anthropic(api_key=self._api_key)
+
+            # Prepare messages
+            messages = [{"role": "user", "content": self._prompt}]
+
+            # Call the API with streaming
+            kwargs = {
+                "model": self._model,
+                "messages": messages,
+                "max_tokens": 4096,
+                "stream": True,
+            }
+
+            if self._system_prompt:
+                kwargs["system"] = self._system_prompt
+
+            with self._client.messages.stream(**kwargs) as stream:
+                for text in stream.text_stream:
+                    if self._cancelled:
+                        break
+                    self.sig_chunk.emit(text)
+
+        except Exception as exc:
+            self.sig_error.emit(str(exc))
+        finally:
+            self._client = None
+            self.sig_finished.emit()
+
+
 class _ClaudeWorker(QObject):
     """Runs a claude CLI call in a background QThread via flatpak-spawn.
 
@@ -39,6 +119,7 @@ class _ClaudeWorker(QObject):
     sig_finished = Signal()       # run complete
     sig_tool_use = Signal(str)    # tool name each time Claude calls a tool
     sig_session_id = Signal(str)  # session ID from the result event
+    sig_prompt = Signal(str)      # approval prompts and other stderr output
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -126,10 +207,16 @@ class _ClaudeWorker(QObject):
             )
             self._proc = proc
             with proc:
-                stderr_chunks: list[bytes] = []
-
                 def _drain_stderr():
-                    stderr_chunks.append(proc.stderr.read())
+                    """Stream stderr line-by-line for approval prompts."""
+                    while True:
+                        line = proc.stderr.readline()
+                        if not line:
+                            break
+                        # Emit stderr lines as prompts (e.g., approval requests)
+                        decoded = line.decode("utf-8", errors="replace").strip()
+                        if decoded:
+                            self.sig_prompt.emit(decoded)
 
                 stderr_thread = threading.Thread(
                     target=_drain_stderr, daemon=True
@@ -154,14 +241,7 @@ class _ClaudeWorker(QObject):
                 proc.wait()
                 stderr_thread.join()
                 if proc.returncode != 0 and not self._cancelled:
-                    err = (
-                        stderr_chunks[0].decode("utf-8", errors="replace").strip()
-                        if stderr_chunks
-                        else ""
-                    )
-                    self.sig_error.emit(
-                        err or f"claude exited with code {proc.returncode}"
-                    )
+                    self.sig_error.emit(f"claude exited with code {proc.returncode}")
 
         except FileNotFoundError:
             if prefix:
@@ -293,19 +373,30 @@ class ClaudeMainWidget(PluginMainWidget):
         # --- Session state ---
         self._session_id = ""
         self._pending_prompt = ""
+        self._current_worker = None  # Track which worker is active
 
-        # --- Background worker ---
-        self._worker = _ClaudeWorker()
+        # --- Background workers (CLI and API) ---
+        self._cli_worker = _ClaudeWorker()
+        self._api_worker = _ClaudeAPIWorker()
         self._thread = QThread(self)
-        self._worker.moveToThread(self._thread)
 
-        self._thread.started.connect(self._worker.run)
-        self._worker.sig_chunk.connect(self._on_chunk)
-        self._worker.sig_error.connect(self._on_error)
-        self._worker.sig_tool_use.connect(self._on_tool_use)
-        self._worker.sig_session_id.connect(self._on_session_id)
-        self._worker.sig_finished.connect(self._thread.quit)
-        self._worker.sig_finished.connect(self._on_worker_finished)
+        # Connect CLI worker signals
+        self._cli_worker.sig_chunk.connect(self._on_chunk)
+        self._cli_worker.sig_error.connect(self._on_error)
+        self._cli_worker.sig_tool_use.connect(self._on_tool_use)
+        self._cli_worker.sig_session_id.connect(self._on_session_id)
+        self._cli_worker.sig_prompt.connect(self._on_prompt)
+        self._cli_worker.sig_finished.connect(self._thread.quit)
+        self._cli_worker.sig_finished.connect(self._on_worker_finished)
+
+        # Connect API worker signals
+        self._api_worker.sig_chunk.connect(self._on_chunk)
+        self._api_worker.sig_error.connect(self._on_error)
+        self._api_worker.sig_tool_use.connect(self._on_tool_use)
+        self._api_worker.sig_finished.connect(self._thread.quit)
+        self._api_worker.sig_finished.connect(self._on_worker_finished)
+
+        self._thread.started.connect(self._on_thread_started)
 
     def update_actions(self):
         pass
@@ -328,7 +419,10 @@ class ClaudeMainWidget(PluginMainWidget):
     def shutdown(self):
         """Stop any running query and clean up the worker thread."""
         if self._thread.isRunning():
-            self._worker.cancel()
+            if self._current_worker == "cli":
+                self._cli_worker.cancel()
+            elif self._current_worker == "api":
+                self._api_worker.cancel()
             self._thread.quit()
             self._thread.wait(3000)
 
@@ -362,15 +456,26 @@ class ClaudeMainWidget(PluginMainWidget):
             return
         self._thread.wait()  # ensure fully stopped before restarting
 
+        use_cli = self.get_conf("use_cli", default=True)
         api_key = self.get_conf("api_key", default="")
         base_url = self.get_conf("base_url", default="https://api.anthropic.com")
         claude_path = self.get_conf("claude_path", default="")
         model = self.get_conf("model", default="sonnet")
         system_prompt = self.get_conf("system_prompt", default="")
 
-        self._worker.configure(
-            prompt, api_key, base_url, claude_path, model, system_prompt, self._session_id
-        )
+        # Move the appropriate worker to the thread
+        if use_cli:
+            self._current_worker = "cli"
+            self._cli_worker.moveToThread(self._thread)
+            self._cli_worker.configure(
+                prompt, api_key, base_url, claude_path, model, system_prompt, self._session_id
+            )
+        else:
+            self._current_worker = "api"
+            self._api_worker.moveToThread(self._thread)
+            self._api_worker.configure(
+                prompt, api_key, base_url, model, system_prompt
+            )
 
         preview = prompt[:120].replace("\n", " ")
         if len(prompt) > 120:
@@ -406,8 +511,21 @@ class ClaudeMainWidget(PluginMainWidget):
         self._session_id = session_id
 
     @Slot(str)
+    def _on_prompt(self, prompt_text: str):
+        """Display approval prompts and other stderr output from CLI."""
+        self._append_text(f"\n{prompt_text}")
+
+    @Slot(str)
     def _on_error(self, message: str):
         self._append_text(f"\n[Error] {message}")
+
+    @Slot()
+    def _on_thread_started(self):
+        """Call the appropriate worker's run method based on mode."""
+        if self._current_worker == "cli":
+            self._cli_worker.run()
+        elif self._current_worker == "api":
+            self._api_worker.run()
 
     @Slot()
     def _on_worker_finished(self):
@@ -415,7 +533,10 @@ class ClaudeMainWidget(PluginMainWidget):
 
     @Slot()
     def _on_cancel_clicked(self):
-        self._worker.cancel()
+        if self._current_worker == "cli":
+            self._cli_worker.cancel()
+        elif self._current_worker == "api":
+            self._api_worker.cancel()
 
     def _set_busy(self, busy: bool):
         self._send_btn.setEnabled(not busy)

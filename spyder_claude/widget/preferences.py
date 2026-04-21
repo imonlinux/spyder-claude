@@ -6,7 +6,7 @@
 
 import os
 
-from qtpy.QtWidgets import QGroupBox, QLineEdit, QVBoxLayout
+from qtpy.QtWidgets import QCheckBox, QGroupBox, QLineEdit, QVBoxLayout, QWidget
 
 from spyder.api.preferences import PluginConfigPage
 from spyder.api.translations import _
@@ -16,21 +16,39 @@ class ClaudeConfigPage(PluginConfigPage):
     """Spyder Preferences page for the Claude plugin."""
 
     def setup_page(self):
-        # ---- Authentication ------------------------------------------------
-        auth_group = QGroupBox(_("Authentication"))
+        # ---- Integration mode ----------------------------------------------
+        mode_group = QGroupBox(_("Integration Mode"))
+
+        use_cli_checkbox = QCheckBox(_("Use Claude Code CLI"))
+        use_cli_checkbox.setToolTip(
+            _(
+                "When checked, uses the claude CLI binary. "
+                "When unchecked, uses the Anthropic API directly with SDK."
+            )
+        )
+        use_cli_checkbox.setChecked(True)
+        self.use_cli_checkbox = use_cli_checkbox
+
+        mode_layout = QVBoxLayout()
+        mode_layout.addWidget(use_cli_checkbox)
+        mode_group.setLayout(mode_layout)
+
+        # ---- Authentication (API mode) -------------------------------------
+        auth_group = QGroupBox(_("API Configuration"))
+        self.auth_group = auth_group
 
         api_key_widget = self.create_lineedit(
             _("Anthropic API key"),
             "api_key",
             tip=_(
                 "Your Anthropic API key. "
-                "Leave blank if you are already authenticated with the claude CLI "
-                "(e.g. via 'claude login'). "
+                "Required when using API mode. "
                 "WARNING: stored in plaintext in Spyder's local configuration "
-                "file — prefer 'claude login' for better security."
+                "file."
             ),
         )
         api_key_widget.textbox.setEchoMode(QLineEdit.Password)
+        self.api_key_widget = api_key_widget
 
         base_url_widget = self.create_lineedit(
             _("API base URL"),
@@ -45,6 +63,7 @@ class ClaudeConfigPage(PluginConfigPage):
             ),
             validate_reason=_("Base URL must start with http:// or https://"),
         )
+        self.base_url_widget = base_url_widget
 
         auth_layout = QVBoxLayout()
         auth_layout.addWidget(api_key_widget)
@@ -52,7 +71,8 @@ class ClaudeConfigPage(PluginConfigPage):
         auth_group.setLayout(auth_layout)
 
         # ---- Claude CLI ----------------------------------------------------
-        cli_group = QGroupBox(_("Claude CLI"))
+        cli_group = QGroupBox(_("Claude CLI Configuration"))
+        self.cli_group = cli_group
 
         claude_path_widget = self.create_lineedit(
             _("Path to claude binary"),
@@ -64,6 +84,7 @@ class ClaudeConfigPage(PluginConfigPage):
             validate_callback=lambda path: not path or os.path.isfile(path),
             validate_reason=_("No file found at this path"),
         )
+        self.claude_path_widget = claude_path_widget
 
         cli_layout = QVBoxLayout()
         cli_layout.addWidget(claude_path_widget)
@@ -77,11 +98,12 @@ class ClaudeConfigPage(PluginConfigPage):
             "model",
             tip=_(
                 "Model name to use for queries. "
-                "Anthropic: opus, sonnet, haiku. "
-                "z.ai: zai:glm-5.1, zai:glm-4.5. "
+                "For API mode: claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5. "
+                "For CLI mode: sonnet, opus, haiku, or provider models like zai:glm-5.1. "
                 "Enter any model name supported by your API provider."
             ),
         )
+        self.model_widget = model_widget
 
         model_layout = QVBoxLayout()
         model_layout.addWidget(model_widget)
@@ -94,7 +116,8 @@ class ClaudeConfigPage(PluginConfigPage):
             _("System prompt"),
             "system_prompt",
             tip=_(
-                "Appended to Claude's default system prompt (--append-system-prompt). "
+                "For API mode: this custom prompt replaces the default system prompt. "
+                "For CLI mode: appended to Claude's default system prompt (--append-system-prompt). "
                 "Leave blank to use Claude's default behaviour."
             ),
         )
@@ -105,9 +128,27 @@ class ClaudeConfigPage(PluginConfigPage):
 
         # ---- Main layout ---------------------------------------------------
         main_layout = QVBoxLayout()
+        main_layout.addWidget(mode_group)
         main_layout.addWidget(auth_group)
         main_layout.addWidget(cli_group)
         main_layout.addWidget(model_group)
         main_layout.addWidget(prompt_group)
         main_layout.addStretch(1)
         self.setLayout(main_layout)
+
+        # ---- Connect signals ------------------------------------------------
+        use_cli_checkbox.toggled.connect(self._on_mode_changed)
+
+        # ---- Initial state -------------------------------------------------
+        self._on_mode_changed(use_cli_checkbox.isChecked())
+
+    def _on_mode_changed(self, use_cli: bool):
+        """Show/hide fields based on integration mode."""
+        if use_cli:
+            # CLI mode: show CLI path, hide API fields
+            self.cli_group.setVisible(True)
+            self.auth_group.setVisible(False)
+        else:
+            # API mode: show API fields, hide CLI path
+            self.cli_group.setVisible(False)
+            self.auth_group.setVisible(True)
