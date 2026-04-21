@@ -145,10 +145,12 @@ class ClaudeConfigPage(PluginConfigPage):
     def _on_mode_changed(self, use_cli: bool):
         """Show/hide fields based on integration mode."""
         if use_cli:
-            # CLI mode: show CLI path, hide API fields
+            # CLI mode: show CLI path, hide API and model fields
             self.cli_group.setVisible(True)
             self.auth_group.setVisible(False)
+            self.model_group.setVisible(False)
         else:
-            # API mode: show API fields, hide CLI path
+            # API mode: show API fields and model, hide CLI path
             self.cli_group.setVisible(False)
             self.auth_group.setVisible(True)
+            self.model_group.setVisible(True)
