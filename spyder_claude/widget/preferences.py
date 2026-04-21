@@ -92,6 +92,7 @@ class ClaudeConfigPage(PluginConfigPage):
 
         # ---- Model selection -----------------------------------------------
         model_group = QGroupBox(_("Model"))
+        self.model_group = model_group
 
         model_widget = self.create_lineedit(
             _("Model name"),
