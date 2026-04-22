@@ -7,8 +7,8 @@ Queries are handled by the [Claude Code CLI](https://claude.ai/code), so the plu
 ## Requirements
 
 - Spyder 6 (Flatpak, pip, conda, or standalone)
-- [Claude Code CLI](https://claude.ai/code) installed on your system
-- An Anthropic API key (or Claude Code login)
+- [Claude Code CLI](https://claude.ai/code) installed on your system (for CLI mode)
+- An Anthropic API key (for API mode or Claude Code login)
 
 ## Installation
 
@@ -63,6 +63,78 @@ The **Claude** panel appears as a dockable widget (find it under **View → Pane
 - **Clear** — clear the display only (conversation context is preserved)
 
 Responses stream token-by-token. When Claude calls a tool (e.g. an MCP server), a `[tool: name]` indicator appears in the response area.
+
+## Platform Support
+
+spyder-claude is cross-platform and works on:
+
+| Platform | Status | Notes |
+|---|---|---|
+| **Linux** | ✅ Fully supported | Native CLI mode, Flatpak mode with host-spawn permission |
+| **macOS** | ✅ Fully supported | Native CLI mode, approval prompts work correctly |
+| **Windows** | ✅ Fully supported | Native CLI mode, approval prompts work correctly |
+
+**All platforms:** API mode works identically across platforms using the Anthropic Python SDK.
+
+### Platform-Specific Notes
+
+**Linux (Flatpak):**
+- One-time permission required: `flatpak override --user --talk-name=org.freedesktop.Flatpak org.spyder_ide.spyder`
+- Approval helper script executes via `flatpak-spawn --host` to escape sandbox
+
+**macOS:**
+- Helper script cached in `~/Library/Caches/spyder-claude/`
+- No special permissions required
+
+**Windows:**
+- Helper script cached in `%LOCALAPPDATA%\spyder-claude\`
+- If approval prompts don't appear, verify `python` or `python3` is in PATH
+- Graceful fallback: if helper script fails, prompts appear in terminal
+
+## Feature Matrix
+
+| Feature | CLI Mode | API Mode |
+|---|---|---|
+| Streaming responses | ✅ | ✅ |
+| Multi-turn conversations | ✅ | ✅ |
+| MCP server support | ✅ | ❌ (Planned) |
+| Approval UI prompts | ✅ | ✅ |
+| Session-based whitelisting | ✅ | ✅ |
+| Custom API base URL | ✅ | ✅ |
+| Alternate model providers | ✅ | ✅ (e.g., z.ai) |
+| System prompt customization | ✅ | ✅ |
+
+**Key Differences:**
+- **CLI Mode:** Uses your existing `claude` CLI configuration. Inherits all connected MCP servers, profiles, and settings.
+- **API Mode:** Direct Anthropic API integration with SDK. Faster startup, no subprocess overhead. Currently does not support MCP servers.
+
+## Release Notes
+
+### Version 0.2.0 (2026-04-22)
+
+**New Features:**
+- ✨ **Dual mode operation:** Choose between Claude Code CLI or direct API mode
+- ✨ **Approval UI:** Interactive modal dialogs for tool call approvals in both modes
+- ✨ **Session whitelisting:** "Allow always" option for trusted tools within a conversation
+- ✨ **Thread safety:** Fixed critical thread safety issues for stable multi-turn conversations
+- ✨ **Cross-platform:** Fully tested on Linux, macOS, and Windows
+
+**Improvements:**
+- 🔧 Refactored worker lifecycle: fresh worker per query prevents state leakage
+- 🔧 Mutex-protected query execution eliminates race conditions
+- 🔧 Graceful shutdown and cancellation handling
+- 🔧 Better error messages and status indicators
+
+**Known Limitations:**
+- API mode does not support MCP servers (use CLI mode for MCP workflows)
+- Session continuity in API mode requires explicit implementation (planned for next release)
+- Windows may need manual `python` command verification if approval prompts don't appear
+- API keys stored in plaintext (documented in preferences with warning)
+
+**Technical Details:**
+- Approval system uses 3-tier architecture: Qt UI → ApprovalServer (QTcpServer) → permission_helper (MCP stdio) → Claude CLI
+- Flatpak sandbox escape via XDG_CACHE_HOME bind-mount for helper script execution
+- Thread pattern: fresh QThread per query, no parent, QMutex-protected critical sections
 
 ## How it works
 
