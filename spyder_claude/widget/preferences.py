@@ -138,10 +138,20 @@ class ClaudeConfigPage(PluginConfigPage):
         self.setLayout(main_layout)
 
         # ---- Connect signals ------------------------------------------------
-        use_cli_checkbox.toggled.connect(self._on_mode_changed)
+        # create_checkbox returns a container, we need to find the actual checkbox
+        # The checkbox is typically the first child of the container
+        checkbox = None
+        for child in use_cli_checkbox.children():
+            if hasattr(child, 'toggled'):
+                checkbox = child
+                break
+
+        if checkbox:
+            checkbox.toggled.connect(self._on_mode_changed)
 
         # ---- Initial state -------------------------------------------------
-        self._on_mode_changed(use_cli_checkbox.isChecked())
+        initial_state = self.get_conf("use_cli", default=True)
+        self._on_mode_changed(initial_state)
 
     def _on_mode_changed(self, use_cli: bool):
         """Show/hide fields based on integration mode."""
