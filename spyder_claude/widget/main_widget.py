@@ -8,9 +8,10 @@ import json
 import os
 import subprocess
 import threading
+from contextlib import contextmanager
 
 from anthropic import Anthropic
-from qtpy.QtCore import QObject, QThread, Qt, Signal, Slot
+from qtpy.QtCore import QObject, QMutex, QThread, Qt, Signal, Slot
 from qtpy.QtGui import QKeySequence
 from qtpy.QtWidgets import (
     QHBoxLayout,
@@ -34,6 +35,8 @@ class _ClaudeAPIWorker(QObject):
     sig_error = Signal(str)       # error message
     sig_finished = Signal()       # run complete
     sig_tool_use = Signal(str)    # tool name each time Claude calls a tool
+    sig_session_id = Signal(str)  # session ID for conversation continuity
+    sig_prompt = Signal(str)      # for consistency with CLI worker interface
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -372,30 +375,23 @@ class ClaudeMainWidget(PluginMainWidget):
         # --- Session state ---
         self._session_id = ""
         self._pending_prompt = ""
-        self._current_worker = None  # Track which worker is active
+        self._current_worker = None  # Track active worker instance
+        self._current_thread = None  # Track active thread instance
+        self._query_mutex = QMutex()  # Prevent concurrent queries
 
-        # --- Background workers (CLI and API) ---
-        self._cli_worker = _ClaudeWorker()
-        self._api_worker = _ClaudeAPIWorker()
-        self._thread = QThread(self)
+    def _connect_worker_signals(self, worker):
+        """Connect signals from a worker to the widget's handlers."""
+        worker.sig_chunk.connect(self._on_chunk)
+        worker.sig_error.connect(self._on_error)
+        worker.sig_finished.connect(self._on_worker_finished)
 
-        # Connect CLI worker signals
-        self._cli_worker.sig_chunk.connect(self._on_chunk)
-        self._cli_worker.sig_error.connect(self._on_error)
-        self._cli_worker.sig_tool_use.connect(self._on_tool_use)
-        self._cli_worker.sig_session_id.connect(self._on_session_id)
-        self._cli_worker.sig_prompt.connect(self._on_prompt)
-        self._cli_worker.sig_finished.connect(self._thread.quit)
-        self._cli_worker.sig_finished.connect(self._on_worker_finished)
-
-        # Connect API worker signals
-        self._api_worker.sig_chunk.connect(self._on_chunk)
-        self._api_worker.sig_error.connect(self._on_error)
-        self._api_worker.sig_tool_use.connect(self._on_tool_use)
-        self._api_worker.sig_finished.connect(self._thread.quit)
-        self._api_worker.sig_finished.connect(self._on_worker_finished)
-
-        self._thread.started.connect(self._on_thread_started)
+        # Connect optional signals if they exist
+        if hasattr(worker, 'sig_tool_use'):
+            worker.sig_tool_use.connect(self._on_tool_use)
+        if hasattr(worker, 'sig_session_id'):
+            worker.sig_session_id.connect(self._on_session_id)
+        if hasattr(worker, 'sig_prompt'):
+            worker.sig_prompt.connect(self._on_prompt)
 
     def update_actions(self):
         pass
@@ -417,18 +413,23 @@ class ClaudeMainWidget(PluginMainWidget):
 
     def shutdown(self):
         """Stop any running query and clean up the worker thread."""
-        if self._thread.isRunning():
-            if self._current_worker == "cli":
-                self._cli_worker.cancel()
-            elif self._current_worker == "api":
-                self._api_worker.cancel()
-            self._thread.quit()
-            self._thread.wait(3000)
+        with QMutexLocker(self._query_mutex):
+            if self._current_thread is not None:
+                if self._current_thread.isRunning():
+                    if self._current_worker is not None:
+                        self._current_worker.cancel()
+                    self._current_thread.quit()
+                    self._current_thread.wait(3000)
+
+                # Clean up
+                self._current_thread.deleteLater()
+                self._current_thread = None
+                self._current_worker = None
 
     # ---- Private helpers ---------------------------------------------------
 
     def _on_send_clicked(self):
-        if self._thread.isRunning():
+        if self._current_thread is not None and self._current_thread.isRunning():
             return
         prompt = self._input_area.toPlainText().strip()
         if prompt:
@@ -436,7 +437,7 @@ class ClaudeMainWidget(PluginMainWidget):
             self._input_area.clear()
 
     def _on_send_with_file_clicked(self):
-        if self._thread.isRunning():
+        if self._current_thread is not None and self._current_thread.isRunning():
             return
         prompt = self._input_area.toPlainText().strip()
         if not prompt:
@@ -451,43 +452,61 @@ class ClaudeMainWidget(PluginMainWidget):
         self._response_area.clear()
 
     def _run_query(self, prompt: str):
-        if self._thread.isRunning():
-            return
-        self._thread.wait()  # ensure fully stopped before restarting
+        # Use mutex to prevent concurrent queries
+        with QMutexLocker(self._query_mutex):
+            # Wait for any existing thread to finish
+            if self._current_thread is not None and self._current_thread.isRunning():
+                return
 
-        use_cli = self.get_conf("use_cli", default=True)
-        api_key = self.get_conf("api_key", default="")
-        base_url = self.get_conf("base_url", default="https://api.anthropic.com")
-        claude_path = self.get_conf("claude_path", default="")
-        model = self.get_conf("model", default="sonnet")
-        system_prompt = self.get_conf("system_prompt", default="")
+            # Clean up previous thread if it exists
+            if self._current_thread is not None:
+                self._current_thread.deleteLater()
+                self._current_thread = None
+                self._current_worker = None
 
-        # Move the appropriate worker to the thread
-        if use_cli:
-            self._current_worker = "cli"
-            self._cli_worker.moveToThread(self._thread)
-            self._cli_worker.configure(
-                prompt, api_key, base_url, claude_path, model, system_prompt, self._session_id
-            )
-        else:
-            self._current_worker = "api"
-            self._api_worker.moveToThread(self._thread)
-            self._api_worker.configure(
-                prompt, api_key, base_url, model, system_prompt
-            )
+            use_cli = self.get_option("use_cli")
+            api_key = self.get_option("api_key")
+            base_url = self.get_option("base_url")
+            claude_path = self.get_option("claude_path")
+            model = self.get_option("model")
+            system_prompt = self.get_option("system_prompt")
 
-        preview = prompt[:120].replace("\n", " ")
-        if len(prompt) > 120:
-            preview += "…"
+            # Create fresh worker instance
+            if use_cli:
+                worker = _ClaudeWorker()
+                worker.configure(
+                    prompt, api_key, base_url, claude_path, model, system_prompt, self._session_id
+                )
+            else:
+                worker = _ClaudeAPIWorker()
+                worker.configure(
+                    prompt, api_key, base_url, model, system_prompt
+                )
 
-        header = f"\n{'─' * 40}\n"
-        if self._session_id:
-            header += _("[continuing conversation]\n")
-        header += f"> {preview}\n\n"
-        self._append_text(header)
+            # Create fresh thread without parent
+            thread = QThread()
+            worker.moveToThread(thread)
 
-        self._set_busy(True)
-        self._thread.start()
+            # Connect signals
+            self._connect_worker_signals(worker)
+            thread.started.connect(worker.run)
+
+            # Store references
+            self._current_worker = worker
+            self._current_thread = thread
+
+            preview = prompt[:120].replace("\n", " ")
+            if len(prompt) > 120:
+                preview += "…"
+
+            header = f"\n{'─' * 40}\n"
+            if self._session_id:
+                header += _("[continuing conversation]\n")
+            header += f"> {preview}\n\n"
+            self._append_text(header)
+
+            self._set_busy(True)
+            thread.start()
 
     def _append_text(self, text: str):
         cursor = self._response_area.textCursor()
@@ -519,23 +538,23 @@ class ClaudeMainWidget(PluginMainWidget):
         self._append_text(f"\n[Error] {message}")
 
     @Slot()
-    def _on_thread_started(self):
-        """Call the appropriate worker's run method based on mode."""
-        if self._current_worker == "cli":
-            self._cli_worker.run()
-        elif self._current_worker == "api":
-            self._api_worker.run()
-
-    @Slot()
     def _on_worker_finished(self):
+        """Clean up thread and worker after query completes."""
+        with QMutexLocker(self._query_mutex):
+            if self._current_thread is not None:
+                self._current_thread.quit()
+                self._current_thread.wait(5000)  # Wait up to 5 seconds for clean shutdown
+                self._current_thread.deleteLater()
+                self._current_thread = None
+                self._current_worker = None
         self._set_busy(False)
 
     @Slot()
     def _on_cancel_clicked(self):
-        if self._current_worker == "cli":
-            self._cli_worker.cancel()
-        elif self._current_worker == "api":
-            self._api_worker.cancel()
+        """Cancel the currently running query."""
+        with QMutexLocker(self._query_mutex):
+            if self._current_worker is not None:
+                self._current_worker.cancel()
 
     def _set_busy(self, busy: bool):
         self._send_btn.setEnabled(not busy)
