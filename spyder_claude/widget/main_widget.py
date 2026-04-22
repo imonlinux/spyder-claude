@@ -307,6 +307,26 @@ class _ClaudeWorker(QObject):
                 if block.get("type") == "tool_use":
                     self.sig_tool_use.emit(block.get("name", "tool"))
 
+            elif itype == "user_input":
+                # Handle approval prompts and other user input requests
+                input_type = inner.get("input_type", "text")
+                text = inner.get("text", "")
+                description = inner.get("description", "")
+
+                # Format the approval prompt for display
+                if input_type == "approval":
+                    prompt_text = f"\n[APPROVAL NEEDED]\n{description}\n"
+                    if text:
+                        prompt_text += f"{text}\n"
+                    prompt_text += "[Waiting for approval in terminal...]"
+                    self.sig_prompt.emit(prompt_text)
+                else:
+                    # Other user input types
+                    prompt_text = f"\n[USER INPUT REQUIRED]\n{description}\n"
+                    if text:
+                        prompt_text += f"{text}\n"
+                    self.sig_prompt.emit(prompt_text)
+
         elif etype == "result":
             if event.get("is_error"):
                 self.sig_error.emit(event.get("result", "Unknown error"))
