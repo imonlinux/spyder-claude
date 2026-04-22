@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from contextlib import contextmanager
 
 from anthropic import Anthropic
@@ -240,8 +241,22 @@ class _ClaudeWorker(QObject):
                                 line.decode("utf-8", errors="replace")
                             )
 
-                proc.wait()
-                stderr_thread.join()
+                # Wait for process to finish with timeout to avoid indefinite hangs
+                # Poll with a timeout instead of using wait() which has no timeout
+                for _ in range(300):  # 30 seconds total (300 * 0.1s)
+                    if proc.poll() is not None:
+                        break
+                    if self._cancelled:
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+                        break
+                    time.sleep(0.1)
+
+                # Wait for stderr thread to finish (with timeout)
+                stderr_thread.join(timeout=5)
+
                 if proc.returncode != 0 and not self._cancelled:
                     self.sig_error.emit(f"claude exited with code {proc.returncode}")
 
@@ -413,37 +428,43 @@ class ClaudeMainWidget(PluginMainWidget):
 
     def shutdown(self):
         """Stop any running query and clean up the worker thread."""
+        # Get references while holding mutex
         with QMutexLocker(self._query_mutex):
-            if self._current_thread is not None:
-                if self._current_thread.isRunning():
-                    if self._current_worker is not None:
-                        self._current_worker.cancel()
-                    self._current_thread.quit()
-                    self._current_thread.wait(3000)
+            thread = self._current_thread
+            worker = self._current_worker
+            # Clear references immediately
+            self._current_thread = None
+            self._current_worker = None
 
-                # Clean up
-                self._current_thread.deleteLater()
-                self._current_thread = None
-                self._current_worker = None
+        # Cancel and wait without holding mutex
+        if thread is not None:
+            if thread.isRunning():
+                if worker is not None:
+                    worker.cancel()
+                thread.quit()
+                # Wait for thread to finish (with timeout)
+                if not thread.wait(3000):
+                    # Thread didn't finish in time - force terminate
+                    logger.warning("Worker thread did not finish cleanly during shutdown, forcing termination")
+                    thread.terminate()
+                    thread.wait(1000)
+
+            # Clean up
+            thread.deleteLater()
 
     # ---- Private helpers ---------------------------------------------------
 
     def _on_send_clicked(self):
-        if self._current_thread is not None and self._current_thread.isRunning():
-            return
         prompt = self._input_area.toPlainText().strip()
         if prompt:
             self._run_query(prompt)
-            self._input_area.clear()
 
     def _on_send_with_file_clicked(self):
-        if self._current_thread is not None and self._current_thread.isRunning():
-            return
         prompt = self._input_area.toPlainText().strip()
         if not prompt:
             return
         self._pending_prompt = prompt
-        self._input_area.clear()
+        self._run_query(prompt)
         self.sig_editor_content_requested.emit()
 
     def _on_new_chat(self):
@@ -452,9 +473,10 @@ class ClaudeMainWidget(PluginMainWidget):
         self._response_area.clear()
 
     def _run_query(self, prompt: str):
+        """Start a query in a background thread. Thread-safe."""
         # Use mutex to prevent concurrent queries
         with QMutexLocker(self._query_mutex):
-            # Wait for any existing thread to finish
+            # Check if a query is already running
             if self._current_thread is not None and self._current_thread.isRunning():
                 return
 
@@ -505,6 +527,9 @@ class ClaudeMainWidget(PluginMainWidget):
             header += f"> {preview}\n\n"
             self._append_text(header)
 
+            # Clear input area now that query is accepted
+            self._input_area.clear()
+
             self._set_busy(True)
             thread.start()
 
@@ -540,13 +565,25 @@ class ClaudeMainWidget(PluginMainWidget):
     @Slot()
     def _on_worker_finished(self):
         """Clean up thread and worker after query completes."""
+        # Get thread reference while holding mutex
         with QMutexLocker(self._query_mutex):
-            if self._current_thread is not None:
-                self._current_thread.quit()
-                self._current_thread.wait(5000)  # Wait up to 5 seconds for clean shutdown
-                self._current_thread.deleteLater()
-                self._current_thread = None
-                self._current_worker = None
+            thread = self._current_thread
+            worker = self._current_worker
+            # Clear references immediately so other methods can proceed
+            self._current_thread = None
+            self._current_worker = None
+
+        # Clean up without holding mutex
+        if thread is not None:
+            thread.quit()
+            # Wait for thread to finish (with timeout)
+            if not thread.wait(5000):
+                # Thread didn't finish in time - force terminate
+                logger.warning("Worker thread did not finish cleanly, forcing termination")
+                thread.terminate()
+                thread.wait(1000)
+            thread.deleteLater()
+
         self._set_busy(False)
 
     @Slot()
