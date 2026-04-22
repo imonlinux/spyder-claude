@@ -11,7 +11,7 @@ import threading
 from contextlib import contextmanager
 
 from anthropic import Anthropic
-from qtpy.QtCore import QObject, QMutex, QThread, Qt, Signal, Slot
+from qtpy.QtCore import QObject, QMutex, QMutexLocker, QThread, Qt, Signal, Slot
 from qtpy.QtGui import QKeySequence
 from qtpy.QtWidgets import (
     QHBoxLayout,
