@@ -150,7 +150,7 @@ class ClaudeConfigPage(PluginConfigPage):
             checkbox.toggled.connect(self._on_mode_changed)
 
         # ---- Initial state -------------------------------------------------
-        initial_state = self.get_conf("use_cli", default=True)
+        initial_state = self.get_option("use_cli")
         self._on_mode_changed(initial_state)
 
     def _on_mode_changed(self, use_cli: bool):
