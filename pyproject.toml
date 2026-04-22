@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "spyder-claude"
 version = "0.2.1"
 description = "Spyder plugin for Claude Code interaction"
+readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 dependencies = [
@@ -33,3 +34,6 @@ include = ["spyder_claude*"]
 
 [tool.setuptools.package-data]
 "spyder_claude.permission_helper" = ["helper.py"]
+
+[tool.setuptools.dynamic]
+readme = {file = ["README.md"], content-type = "text/markdown"}
