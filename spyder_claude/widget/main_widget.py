@@ -87,7 +87,6 @@ class _ClaudeAPIWorker(QObject):
                 "model": self._model,
                 "messages": messages,
                 "max_tokens": 4096,
-                "stream": True,
             }
 
             if self._system_prompt:
