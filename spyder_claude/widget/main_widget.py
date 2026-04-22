@@ -757,7 +757,6 @@ class ClaudeMainWidget(PluginMainWidget):
         if not prompt:
             return
         self._pending_prompt = prompt
-        self._run_query(prompt)
         self.sig_editor_content_requested.emit()
 
     def _on_new_chat(self) -> None:
