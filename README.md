@@ -24,6 +24,11 @@ flatpak run --command=python3 org.spyder_ide.spyder -m pip install spyder-claude
 pip install spyder-claude
 ```
 
+**If PyPI is not yet available, install from GitHub:**
+```bash
+pip install git+https://github.com/imonlinux/spyder-claude.git@v0.2.0
+```
+
 To install from source, replace `spyder-claude` with the path to a cloned copy:
 ```bash
 git clone https://github.com/imonlinux/spyder-claude.git
