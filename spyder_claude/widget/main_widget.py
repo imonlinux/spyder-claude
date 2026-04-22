@@ -464,12 +464,12 @@ class ClaudeMainWidget(PluginMainWidget):
                 self._current_thread = None
                 self._current_worker = None
 
-            use_cli = self.get_option("use_cli")
-            api_key = self.get_option("api_key")
-            base_url = self.get_option("base_url")
-            claude_path = self.get_option("claude_path")
-            model = self.get_option("model")
-            system_prompt = self.get_option("system_prompt")
+            use_cli = self.get_conf("use_cli", default=True)
+            api_key = self.get_conf("api_key", default="")
+            base_url = self.get_conf("base_url", default="https://api.anthropic.com")
+            claude_path = self.get_conf("claude_path", default="")
+            model = self.get_conf("model", default="sonnet")
+            system_prompt = self.get_conf("system_prompt", default="")
 
             # Create fresh worker instance
             if use_cli:
