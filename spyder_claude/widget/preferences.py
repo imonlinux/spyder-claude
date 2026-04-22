@@ -19,14 +19,14 @@ class ClaudeConfigPage(PluginConfigPage):
         # ---- Integration mode ----------------------------------------------
         mode_group = QGroupBox(_("Integration Mode"))
 
-        use_cli_checkbox = QCheckBox(_("Use Claude Code CLI"))
-        use_cli_checkbox.setToolTip(
-            _(
+        use_cli_checkbox = self.create_checkbox(
+            _("Use Claude Code CLI"),
+            "use_cli",
+            tip=_(
                 "When checked, uses the claude CLI binary. "
                 "When unchecked, uses the Anthropic API directly with SDK."
-            )
+            ),
         )
-        use_cli_checkbox.setChecked(True)
         self.use_cli_checkbox = use_cli_checkbox
 
         mode_layout = QVBoxLayout()
