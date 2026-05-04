@@ -4,10 +4,10 @@
 
 """Encryption utilities for secure credential storage."""
 
+import base64
 import hashlib
 import os
 import platform
-from base64 import urlsafe_b64encode
 from cryptography.fernet import Fernet
 from typing import Optional
 
@@ -34,7 +34,7 @@ class EncryptionManager:
             custom_salt: Optional custom salt for testing
 
         Returns:
-            32-byte encryption key suitable for Fernet
+            32-byte base64-urlsafe-encoded encryption key suitable for Fernet
         """
         # Use custom salt if provided (for testing), otherwise derive from system
         if custom_salt:
@@ -44,8 +44,9 @@ class EncryptionManager:
             system_id = platform.node() + os.path.expanduser("~")
             salt = system_id.encode()
 
-        # Derive 32-byte key using SHA-256
-        return hashlib.sha256(salt).digest()
+        # Derive 32-byte key using SHA-256, then encode as base64-urlsafe for Fernet
+        key_bytes = hashlib.sha256(salt).digest()
+        return base64.urlsafe_b64encode(key_bytes)
 
     def encrypt(self, plaintext: str) -> str:
         """Encrypt plaintext string.

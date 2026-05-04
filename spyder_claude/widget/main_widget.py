@@ -601,8 +601,14 @@ class ClaudeMainWidget(PluginMainWidget):
             self.session_manager = SessionManager(secure_storage)
             self.api_key_security = APIKeySecurity(secure_storage)
             self._restore_session()  # Restore previous session if available
+            logger.info("Session manager initialized successfully")
+        except ImportError as e:
+            logger.error(f"Failed to import security modules: {e}")
+            logger.error("Try: flatpak run --command=python3 org.spyder_ide.spyder -m pip install cryptography>=41.0.0")
+            self.session_manager = None
+            self.api_key_security = None
         except Exception as e:
-            logger.warning(f"Failed to initialize session manager: {e}")
+            logger.error(f"Failed to initialize session manager: {e}")
             self.session_manager = None
             self.api_key_security = None
 
