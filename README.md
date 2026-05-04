@@ -9,6 +9,7 @@ Queries are handled by the [Claude Code CLI](https://claude.ai/code), so the plu
 - Spyder 6 (Flatpak, pip, conda, or standalone)
 - [Claude Code CLI](https://claude.ai/code) installed on your system (for CLI mode)
 - An Anthropic API key (for API mode or Claude Code login)
+- Python `cryptography` library (automatically installed with the plugin)
 
 ## Installation
 
@@ -52,7 +53,7 @@ Open **Tools → Preferences → Claude** and set:
 
 | Setting | Description |
 |---|---|
-| Anthropic API key | Your API key (stored locally, masked in UI). Leave blank if you use `claude login`. |
+| Anthropic API key | Your API key (securely stored using platform credential manager, masked in UI). Leave blank if you use `claude login`. |
 | API base URL | Base URL for the API endpoint. Default: `https://api.anthropic.com`. Use alternative providers like z.ai by changing this. |
 | Path to claude binary | Full path to the `claude` executable, e.g. `/home/user/.npm-global/bin/claude` |
 | Model name | Model name to use. Anthropic: `opus`, `sonnet`, `haiku`. z.ai: `zai:glm-5.1`, `zai:glm-4.5`. Enter any model name supported by your provider. |
@@ -68,6 +69,14 @@ The **Claude** panel appears as a dockable widget (find it under **View → Pane
 - **Clear** — clear the display only (conversation context is preserved)
 
 Responses stream token-by-token. When Claude calls a tool (e.g. an MCP server), a `[tool: name]` indicator appears in the response area.
+
+### Session Persistence
+
+In **CLI mode**, conversations automatically persist across Spyder restarts. When you restart Spyder and open the Claude panel, your previous conversation is restored and you can continue where you left off. Sessions are securely stored and expire after 7 days.
+
+Click **New Chat** to start a fresh conversation when needed.
+
+**Note:** Session persistence is only available in CLI mode. API mode maintains conversation context during the IDE session but does not persist across restarts due to Anthropic API SDK architecture.
 
 ## Platform Support
 
@@ -105,17 +114,54 @@ spyder-claude is cross-platform and works on:
 | MCP server support | ✅ | ❌ (Planned) |
 | Approval UI prompts | ✅ | ✅ |
 | Session-based whitelisting | ✅ | ✅ |
+| Session persistence (across restarts) | ✅ | ❌ |
+| Secure API key storage | ✅ | ✅ |
 | Custom API base URL | ✅ | ✅ |
 | Alternate model providers | ✅ | ✅ (e.g., z.ai) |
 | System prompt customization | ✅ | ✅ |
 
 **Key Differences:**
-- **CLI Mode:** Uses your existing `claude` CLI configuration. Inherits all connected MCP servers, profiles, and settings.
-- **API Mode:** Direct Anthropic API integration with SDK. Faster startup, no subprocess overhead. Currently does not support MCP servers.
+- **CLI Mode:** Uses your existing `claude` CLI configuration. Inherits all connected MCP servers, profiles, and settings. Conversations persist across IDE restarts using Claude CLI's `--resume` parameter.
+- **API Mode:** Direct Anthropic API integration with SDK. Faster startup, no subprocess overhead. Currently does not support MCP servers. Session persistence is limited to current IDE session (API SDK doesn't expose session IDs).
 
 ## Release Notes
 
-### Version 0.2.0 (2026-04-22)
+### Version 0.3.0 (2026-05-04)
+
+**New Features:**
+- 🔒 **Secure API key storage:** API keys are now encrypted using platform credential managers (Windows DPAPI, macOS Keychain, Linux Secret Service) with fallback to encrypted file storage
+- 💾 **Session persistence:** Conversations now persist across IDE restarts in CLI mode using Claude CLI's `--resume` parameter
+- 🛡️ **Cross-platform security:** Automatic platform detection with graceful fallbacks ensures secure storage on all platforms
+- 🔄 **Automatic migration:** Existing plaintext API keys are automatically migrated to secure storage on first startup
+- 📅 **Session expiration:** Persisted sessions automatically expire after 7 days for security
+
+**Improvements:**
+- 🔧 Enhanced security architecture using Fernet encryption (AES-128-CBC)
+- 🔧 System-specific key derivation prevents unauthorized access across machines
+- 🔧 Visual feedback when previous conversation is restored
+- 🔧 Better error handling for encryption failures
+
+**Known Limitations:**
+- Session persistence only available in CLI mode (API mode limited by Anthropic SDK architecture)
+- API mode maintains conversation context during IDE session but doesn't persist across restarts
+- Migration requires `cryptography` library (automatically installed)
+
+**Technical Details:**
+- Encryption: Fernet symmetric encryption (AES-128-CBC) with system-specific key derivation
+- Platform storage: Native OS credential managers when available, encrypted file fallback otherwise
+- Session storage: JSON format with secure encryption, 7-day expiration
+- Migration: Automatic detection and migration of plaintext keys with rollback safety
+
+### Version 0.2.2 (2026-04-24)
+
+**New Features:**
+- ✨ **Comprehensive test suite:** 25 tests covering configuration, platform detection, helper scripts, and plugin structure
+
+**Improvements:**
+- 🔧 Added pytest configuration and dev dependencies
+- 🔧 Better test coverage for critical components
+
+### Version 0.2.1 (2026-04-22)
 
 **New Features:**
 - ✨ **Dual mode operation:** Choose between Claude Code CLI or direct API mode
@@ -132,9 +178,8 @@ spyder-claude is cross-platform and works on:
 
 **Known Limitations:**
 - API mode does not support MCP servers (use CLI mode for MCP workflows)
-- Session continuity in API mode requires explicit implementation (planned for next release)
 - Windows may need manual `python` command verification if approval prompts don't appear
-- API keys stored in plaintext (documented in preferences with warning)
+- API keys stored in plaintext (resolved in v0.3.0)
 
 **Technical Details:**
 - Approval system uses 3-tier architecture: Qt UI → ApprovalServer (QTcpServer) → permission_helper (MCP stdio) → Claude CLI
@@ -154,6 +199,16 @@ flatpak-spawn --host <claude_path> -p --verbose \
 ```
 
 The plugin sets the `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` environment variables as needed, then parses the `stream-json` event stream to display text incrementally, surface tool calls, and capture the session ID for conversation continuity.
+
+**Session Persistence:** In CLI mode, the session ID returned by Claude is securely stored and reused on subsequent queries, allowing conversations to continue across IDE restarts. The `--resume <session_id>` parameter automatically resumes previous conversations.
+
+**Secure Storage:** API keys are encrypted using Fernet (AES-128-CBC) and stored using platform credential managers when available:
+- **Windows:** DPAPI via pywin32
+- **macOS:** Keychain Services (native)
+- **Linux:** Secret Service API (GNOME Keyring/KWallet)
+- **Fallback:** Encrypted file storage with system-specific key derivation
+
+Existing plaintext keys are automatically migrated to secure storage on first startup.
 
 ## License
 

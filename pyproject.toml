@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spyder-claude"
-version = "0.2.2"
+version = "0.3.0"
 description = "Spyder plugin for Claude Code interaction"
 readme = "README.md"
 license = {text = "MIT"}
