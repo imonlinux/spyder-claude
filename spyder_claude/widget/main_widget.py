@@ -36,6 +36,9 @@ from spyder.api.widgets.main_widget import PluginMainWidget
 
 from .approval_dialog import ALLOW_ALWAYS, ALLOW_ONCE, DENY, ApprovalDialog
 from .approval_server import ApprovalServer
+from ..session import SessionManager
+from ..secure_storage import create_secure_storage
+from ..api_key_security import APIKeySecurity, SECURE_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
 
@@ -591,6 +594,18 @@ class ClaudeMainWidget(PluginMainWidget):
         # --- Per-conversation "always allow" set (resets on New Chat) ---
         self._session_allowed_tools: Set[str] = set()
 
+        # --- Session persistence ---
+        # Initialize session manager for cross-restart conversation continuity
+        try:
+            secure_storage = create_secure_storage()
+            self.session_manager = SessionManager(secure_storage)
+            self.api_key_security = APIKeySecurity(secure_storage)
+            self._restore_session()  # Restore previous session if available
+        except Exception as e:
+            logger.warning(f"Failed to initialize session manager: {e}")
+            self.session_manager = None
+            self.api_key_security = None
+
         # --- Approval server ---
         # Lazily started on first query so a broken network stack doesn't
         # prevent the widget from loading entirely.
@@ -760,9 +775,43 @@ class ClaudeMainWidget(PluginMainWidget):
         self.sig_editor_content_requested.emit()
 
     def _on_new_chat(self) -> None:
+        """Start fresh conversation."""
         self._session_id = ""
         self._session_allowed_tools.clear()
         self._response_area.clear()
+
+        # Clear persisted session
+        if self.session_manager:
+            try:
+                self.session_manager.clear_session()
+                logger.debug("Cleared persisted session for new chat")
+            except Exception as e:
+                logger.warning(f"Failed to clear persisted session: {e}")
+
+    def _load_api_key(self, config_value: str) -> str:
+        """Load API key from config or secure storage.
+
+        Args:
+            config_value: Value from Spyder config (may be SECURE:stored placeholder)
+
+        Returns:
+            Actual API key string
+        """
+        # If we have secure storage and the config contains the placeholder
+        if self.api_key_security and config_value == SECURE_PLACEHOLDER:
+            try:
+                secure_key = self.api_key_security.retrieve_api_key()
+                if secure_key:
+                    return secure_key
+                else:
+                    logger.warning("Secure storage placeholder found but no key in storage")
+                    return ""
+            except Exception as e:
+                logger.error(f"Failed to load API key from secure storage: {e}")
+                return ""
+
+        # Otherwise return the config value as-is (plaintext or empty)
+        return config_value
 
     def _run_query(self, prompt: str) -> None:
         with QMutexLocker(self._query_mutex):
@@ -782,7 +831,8 @@ class ClaudeMainWidget(PluginMainWidget):
                 self._current_worker = None
 
             use_cli = self.get_conf("use_cli", default=True)
-            api_key = self.get_conf("api_key", default="")
+            api_key_config = self.get_conf("api_key", default="")
+            api_key = self._load_api_key(api_key_config)  # Load from secure storage if needed
             base_url = self.get_conf(
                 "base_url", default="https://api.anthropic.com"
             )
@@ -872,7 +922,48 @@ class ClaudeMainWidget(PluginMainWidget):
 
     @Slot(str)
     def _on_session_id(self, session_id: str) -> None:
+        """Handle new session ID from Claude CLI/API."""
         self._session_id = session_id
+
+        # Save session for persistence across IDE restarts
+        if self.session_manager and session_id:
+            try:
+                use_cli = self.get_conf("use_cli", default=True)
+                model = self.get_conf("model", default="sonnet")
+                mode = "cli" if use_cli else "api"
+
+                self.session_manager.create_session(
+                    session_id=session_id,
+                    model=model,
+                    mode=mode,
+                    metadata={"created_at": self._get_current_time()}
+                )
+                logger.debug(f"Saved session for persistence: {session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to save session: {e}")
+
+    def _restore_session(self) -> None:
+        """Restore previous session if available and valid."""
+        if not self.session_manager:
+            return
+
+        try:
+            session = self.session_manager.load_session()
+            if session and self.session_manager.is_session_valid():
+                self._session_id = session.session_id
+                self._append_text(
+                    _("\n[previous conversation restored — session continued]\n")
+                )
+                logger.info(f"Restored previous session: {session.session_id}")
+            else:
+                logger.debug("No valid previous session to restore")
+        except Exception as e:
+            logger.warning(f"Failed to restore session: {e}")
+
+    def _get_current_time(self) -> str:
+        """Get current time as ISO format string."""
+        from datetime import datetime
+        return datetime.now().isoformat()
 
     @Slot(str)
     def _on_prompt(self, prompt_text: str) -> None:
