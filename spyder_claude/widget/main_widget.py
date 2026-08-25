@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -51,6 +52,35 @@ _HELPER_PACKAGE_PATH = (
 )
 
 
+def _get_cache_root() -> Path:
+    """Get the platform-appropriate cache directory for spyder-claude.
+
+    Returns:
+        Path object pointing to the cache root directory.
+
+    Examples:
+        Windows: C:\\Users\\username\\AppData\\Local\\spyder-claude
+        macOS:   ~/Library/Caches/spyder-claude
+        Linux:   ~/.cache/spyder-claude (or $XDG_CACHE_HOME/spyder-claude)
+    """
+    if sys.platform == "win32":
+        # Windows: %LOCALAPPDATA%\spyder-claude
+        localappdata = os.environ.get("LOCALAPPDATA", "")
+        if localappdata:
+            return Path(localappdata) / "spyder-claude"
+        # Fallback if LOCALAPPDATA isn't set (shouldn't happen on normal Windows)
+        return Path.home() / ".local" / "share" / "spyder-claude"
+    elif sys.platform == "darwin":
+        # macOS: ~/Library/Caches/spyder-claude
+        return Path.home() / "Library" / "Caches" / "spyder-claude"
+    else:
+        # Linux/Unix: $XDG_CACHE_HOME/spyder-claude or ~/.cache/spyder-claude
+        return Path(
+            os.environ.get("XDG_CACHE_HOME")
+            or (Path.home() / ".cache")
+        ) / "spyder-claude"
+
+
 def _bootstrap_helper_script() -> Path:
     """Copy the bundled helper script to a location the host side can read.
 
@@ -64,10 +94,7 @@ def _bootstrap_helper_script() -> Path:
     host's python interpreter can execute it with no dependency on Spyder's
     Python environment.
     """
-    cache_root = Path(
-        os.environ.get("XDG_CACHE_HOME")
-        or (Path.home() / ".cache")
-    ) / "spyder-claude"
+    cache_root = _get_cache_root()
     cache_root.mkdir(parents=True, exist_ok=True)
     target = cache_root / "permission_helper.py"
 
@@ -418,10 +445,7 @@ class _ClaudeWorker(QObject):
         }
 
         # Place the mcp-config file in the same host-visible dir as the helper.
-        cache_root = Path(
-            os.environ.get("XDG_CACHE_HOME")
-            or (Path.home() / ".cache")
-        ) / "spyder-claude"
+        cache_root = _get_cache_root()
         cache_root.mkdir(parents=True, exist_ok=True)
 
         fd, inside_path = tempfile.mkstemp(

@@ -9,9 +9,54 @@ import pytest
 
 from spyder_claude.widget.main_widget import (
     _bootstrap_helper_script,
+    _get_cache_root,
     _host_visible_path,
     _running_in_flatpak,
 )
+
+
+class TestGetCacheRoot:
+    """Test _get_cache_root function for cross-platform cache paths."""
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
+    @patch.dict(os.environ, {"LOCALAPPDATA": "C:\\Users\\test\\AppData\\Local"})
+    def test_windows_with_localappdata(self):
+        """Test Windows returns LOCALAPPDATA path when set."""
+        result = _get_cache_root()
+        assert "spyder-claude" in str(result)
+        assert "AppData\\Local" in str(result) or "AppData/Local" in str(result)
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
+    @patch.dict(os.environ, {}, clear=True)
+    def test_windows_fallback_without_localappdata(self):
+        """Test Windows fallback when LOCALAPPDATA is not set."""
+        result = _get_cache_root()
+        assert "spyder-claude" in str(result)
+        # Should use fallback .local/share path
+        assert ".local" in str(result) or "Local" in str(result)
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "darwin")
+    def test_macos(self):
+        """Test macOS returns ~/Library/Caches path."""
+        result = _get_cache_root()
+        assert "spyder-claude" in str(result)
+        assert "Library" in str(result) and ("Caches" in str(result) or ".cache" in str(result))
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "linux")
+    @patch.dict(os.environ, {"XDG_CACHE_HOME": "/tmp/test_cache"})
+    def test_linux_with_xdg_cache_home(self):
+        """Test Linux uses XDG_CACHE_HOME when set."""
+        result = _get_cache_root()
+        assert "spyder-claude" in str(result)
+        assert "test_cache" in str(result)
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "linux")
+    @patch.dict(os.environ, {}, clear=True)
+    def test_linux_fallback_without_xdg(self):
+        """Test Linux fallback to ~/.cache when XDG_CACHE_HOME not set."""
+        result = _get_cache_root()
+        assert "spyder-claude" in str(result)
+        assert ".cache" in str(result)
 
 
 class TestPlatformDetection:
