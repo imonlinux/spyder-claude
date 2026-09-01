@@ -53,23 +53,17 @@ _HELPER_PACKAGE_PATH = (
 
 
 def _get_cache_root() -> Path:
-    """Get the platform-appropriate cache directory for spyder-claude.
-
-    Returns:
-        Path object pointing to the cache root directory.
-
-    Examples:
-        Windows: C:\\Users\\username\\AppData\\Local\\spyder-claude
-        macOS:   ~/Library/Caches/spyder-claude
-        Linux:   ~/.cache/spyder-claude (or $XDG_CACHE_HOME/spyder-claude)
-    """
     if sys.platform == "win32":
         # Windows: %LOCALAPPDATA%\spyder-claude
         localappdata = os.environ.get("LOCALAPPDATA", "")
         if localappdata:
             return Path(localappdata) / "spyder-claude"
-        # Fallback if LOCALAPPDATA isn't set (shouldn't happen on normal Windows)
-        return Path.home() / ".local" / "share" / "spyder-claude"
+        # Fallback if LOCALAPPDATA isn't set (use %APPDATA%\spyder-claude)
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            return Path(appdata) / "spyder-claude"
+        # If both LOCALAPPDATA and APPDATA are missing, use a default path
+        return Path.home() / "AppData" / "Roaming" / "spyder-claude"
     elif sys.platform == "darwin":
         # macOS: ~/Library/Caches/spyder-claude
         return Path.home() / "Library" / "Caches" / "spyder-claude"
