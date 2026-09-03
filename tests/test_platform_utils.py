@@ -10,6 +10,7 @@ import pytest
 from spyder_claude.widget.main_widget import (
     _bootstrap_helper_script,
     _get_cache_root,
+    _host_python_command,
     _host_visible_path,
     _running_in_flatpak,
 )
@@ -29,11 +30,25 @@ class TestGetCacheRoot:
     @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
     @patch.dict(os.environ, {}, clear=True)
     def test_windows_fallback_without_localappdata(self):
-        """Test Windows fallback when LOCALAPPDATA is not set."""
+        """Both LOCALAPPDATA and APPDATA unset -> Roaming AppData default."""
         result = _get_cache_root()
         assert "spyder-claude" in str(result)
-        # Should use fallback .local/share path
-        assert ".local" in str(result) or "Local" in str(result)
+        assert "AppData" in str(result)
+        assert "Roaming" in str(result)
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
+    @patch.dict(
+        os.environ,
+        {"APPDATA": "C:\\Users\\test\\AppData\\Roaming"},
+        clear=True,
+    )
+    def test_windows_appdata_fallback(self):
+        """LOCALAPPDATA unset but APPDATA set -> use APPDATA."""
+        result = _get_cache_root()
+        assert "spyder-claude" in str(result)
+        assert "Roaming" in str(result)
+        # Must not have silently fallen through to the Path.home() default.
+        assert "C:" in str(result)
 
     @patch("spyder_claude.widget.main_widget.sys.platform", "darwin")
     def test_macos(self):
@@ -57,6 +72,32 @@ class TestGetCacheRoot:
         result = _get_cache_root()
         assert "spyder-claude" in str(result)
         assert ".cache" in str(result)
+
+
+class TestHostPythonCommand:
+    """Test _host_python_command interpreter selection."""
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "linux")
+    def test_posix_uses_python3(self):
+        assert _host_python_command() == ("python3", [])
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
+    @patch("spyder_claude.widget.main_widget.shutil.which")
+    def test_windows_prefers_py_launcher(self, mock_which):
+        mock_which.side_effect = lambda c: "C:\\Windows\\py.exe" if c == "py" else None
+        assert _host_python_command() == ("py", ["-3"])
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
+    @patch("spyder_claude.widget.main_widget.shutil.which")
+    def test_windows_falls_back_to_python(self, mock_which):
+        mock_which.side_effect = lambda c: None if c == "py" else "C:\\Python\\python.exe"
+        assert _host_python_command() == ("python", [])
+
+    @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
+    @patch("spyder_claude.widget.main_widget.shutil.which", return_value=None)
+    def test_windows_never_returns_python3(self, mock_which):
+        cmd, _args = _host_python_command()
+        assert cmd != "python3"
 
 
 class TestPlatformDetection:

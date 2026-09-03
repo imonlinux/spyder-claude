@@ -111,6 +111,36 @@ def _running_in_flatpak() -> bool:
     return os.path.exists("/.flatpak-info") or "FLATPAK_ID" in os.environ
 
 
+def _host_python_command() -> "tuple[str, list]":
+    """A Python 3 interpreter reachable from the *host* side.
+
+    Returns ``(command, extra_args)``; the helper script path is appended
+    after ``extra_args`` when the mcp-config is written.
+
+    Claude Code runs on the host and spawns the MCP helper there, so we
+    must name an interpreter that exists outside any sandbox.
+    ``sys.executable`` is deliberately NOT used: under Flatpak it points
+    into the sandbox and would not resolve on the host. The helper is
+    stdlib-only, so any Python 3 will do.
+
+    Windows has no reliable ``python3`` command — python.org installs
+    provide ``python.exe`` plus the ``py`` launcher, and Windows ships an
+    App Execution Alias called ``python3.exe`` that just opens the
+    Microsoft Store. Prefer the ``py -3`` launcher, then ``python``.
+    """
+    if sys.platform == "win32":
+        # shutil.which is trustworthy here: there is no sandbox on
+        # Windows, so our PATH is the host's PATH.
+        if shutil.which("py"):
+            return "py", ["-3"]
+        if shutil.which("python"):
+            return "python", []
+        # Last resort — let Claude Code surface the spawn failure rather
+        # than guessing at an absolute path.
+        return "python", []
+    return "python3", []
+
+
 def _host_visible_path(inside_path: Path) -> str:
     """Translate a sandbox path to one the host can see, if possible.
 
@@ -128,6 +158,13 @@ def _host_visible_path(inside_path: Path) -> str:
 
     try:
         # If the path lives under $XDG_CACHE_HOME inside the sandbox, map it.
+        #
+        # NOTE: this deliberately re-derives the XDG cache *root* instead of
+        # calling _get_cache_root(). We need the bare root to use as a
+        # relative_to() prefix; _get_cache_root() appends "spyder-claude",
+        # and stripping that too would drop it from the translated path.
+        # This branch is Flatpak-only (Linux), so the Windows/macOS arms of
+        # _get_cache_root() are irrelevant here.
         cache_inside = Path(
             os.environ.get("XDG_CACHE_HOME")
             or (Path.home() / ".cache")
@@ -423,13 +460,18 @@ class _ClaudeWorker(QObject):
         """Write the MCP config JSON to a host-readable tempfile.
 
         perm_config must contain at least {python, script, port, token} where
-        ``python`` and ``script`` are host-visible paths.
+        ``python`` and ``script`` are host-visible paths. ``python_args`` is
+        an optional list of interpreter arguments (e.g. ["-3"]) inserted
+        before the script path.
         """
         cfg = {
             "mcpServers": {
                 "spyder_claude_perm": {
                     "command": perm_config["python"],
-                    "args": [perm_config["script"]],
+                    "args": [
+                        *perm_config.get("python_args", []),
+                        perm_config["script"],
+                    ],
                     "env": {
                         "SPYDER_CLAUDE_PERM_PORT": str(perm_config["port"]),
                         "SPYDER_CLAUDE_PERM_TOKEN": perm_config["token"],
@@ -667,8 +709,10 @@ class ClaudeMainWidget(PluginMainWidget):
         which case we fall back to no-permission-prompt-tool mode).
         """
         if self._approval_server is not None and self._helper_script_host_path:
+            python, python_args = _host_python_command()
             return {
-                "python": self._host_python_path(),
+                "python": python,
+                "python_args": python_args,
                 "script": self._helper_script_host_path,
                 "port": self._approval_port,
                 "token": self._approval_server.token,
@@ -689,24 +733,14 @@ class ClaudeMainWidget(PluginMainWidget):
             self._helper_script_host_path = None
             return None
 
+        python, python_args = _host_python_command()
         return {
-            "python": self._host_python_path(),
+            "python": python,
+            "python_args": python_args,
             "script": self._helper_script_host_path,
             "port": self._approval_port,
             "token": self._approval_server.token,
         }
-
-    @staticmethod
-    def _host_python_path() -> str:
-        """A Python 3 interpreter reachable from the host side.
-
-        Inside Flatpak, ``claude`` runs on the host and spawns the MCP helper
-        on the host, so we must name an interpreter that exists *outside* the
-        sandbox. Assuming ``python3`` is on the host PATH is the least-bad
-        default — the only dependency is the stdlib. (`sys.executable` would
-        point into the sandbox and would not work.)
-        """
-        return "python3"
 
     # ---- Approval request → dialog ----------------------------------------
 
