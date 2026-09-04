@@ -29,12 +29,15 @@ class TestGetCacheRoot:
 
     @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
     @patch.dict(os.environ, {}, clear=True)
-    def test_windows_fallback_without_localappdata(self):
+    @patch("spyder_claude.widget.main_widget.Path.home")
+    def test_windows_fallback_without_localappdata(self, mock_home):
         """Both LOCALAPPDATA and APPDATA unset -> Roaming AppData default."""
+        # Path.home() must be pinned: on Windows it raises RuntimeError when
+        # the environment is cleared (ntpath has no pwd fallback like POSIX).
+        home = Path("C:\\Users\\tester")
+        mock_home.return_value = home
         result = _get_cache_root()
-        assert "spyder-claude" in str(result)
-        assert "AppData" in str(result)
-        assert "Roaming" in str(result)
+        assert result == home / "AppData" / "Roaming" / "spyder-claude"
 
     @patch("spyder_claude.widget.main_widget.sys.platform", "win32")
     @patch.dict(
@@ -67,11 +70,15 @@ class TestGetCacheRoot:
 
     @patch("spyder_claude.widget.main_widget.sys.platform", "linux")
     @patch.dict(os.environ, {}, clear=True)
-    def test_linux_fallback_without_xdg(self):
+    @patch("spyder_claude.widget.main_widget.Path.home")
+    def test_linux_fallback_without_xdg(self, mock_home):
         """Test Linux fallback to ~/.cache when XDG_CACHE_HOME not set."""
+        # Path.home() must be pinned: this suite also runs on Windows CI,
+        # where Path.home() raises when the environment is cleared.
+        home = Path("/home/tester")
+        mock_home.return_value = home
         result = _get_cache_root()
-        assert "spyder-claude" in str(result)
-        assert ".cache" in str(result)
+        assert result == home / ".cache" / "spyder-claude"
 
 
 class TestHostPythonCommand:
