@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-04
+
+### Fixed
+- Windows: the permission helper is now installed under
+  `%LOCALAPPDATA%\spyder-claude` (with `%APPDATA%` and `~/AppData/Roaming`
+  fallbacks), so the cache directory is actually created on Windows (#1)
+- Windows: the generated mcp-config no longer hardcodes `python3` as the
+  helper interpreter. On Windows `python3` is usually missing or is the
+  Microsoft Store App Execution Alias stub, so the MCP server never started
+  and approval prompts silently never appeared. The plugin now prefers the
+  `py -3` launcher, then `python`, on Windows; Linux and macOS keep `python3`
+
+### Added
+- GitHub Actions CI: test matrix (Linux, Windows, macOS on Python 3.9 and
+  3.13) plus unmocked Windows and macOS smoke jobs that verify
+  cache-directory creation, helper installation, and interpreter selection
+  on real operating systems
+- CI badge in the README
+
 ## [0.2.2] - 2026-04-24
 
 ### Added
