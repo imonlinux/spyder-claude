@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip pytest
+        run: python -m pip install --upgrade pip pytest cryptography
       - name: Run test suite
         run: python -m pytest tests/ -v
 
@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip pytest
+        run: python -m pip install --upgrade pip pytest cryptography
       - name: Run Windows smoke tests
         run: python -m pytest tests/test_smoke_platforms.py -v
 
@@ -51,6 +51,6 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip pytest
+        run: python -m pip install --upgrade pip pytest cryptography
       - name: Run macOS smoke tests
         run: python -m pytest tests/test_smoke_platforms.py -v
