@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -25,10 +25,11 @@ jobs:
         run: python -m pytest tests/ -v
 
   windows-smoke:
-    # The suite mocks sys.platform, so it passes anywhere. This job runs the
-    # platform code UNMOCKED on a real Windows runner: real %LOCALAPPDATA%,
-    # real py launcher, real file system. It exists because the Windows cache
-    # fix (#1) could not be verified on a Windows machine by the maintainers.
+    # The suite mocks sys.platform, so it passes anywhere. These smoke jobs
+    # run the platform code UNMOCKED on real OS runners: real cache
+    # directories, real interpreters, real file systems. They exist because
+    # the Windows cache fix (#1) could not be verified on a Windows machine
+    # by the maintainers, and the README claims macOS support.
     name: windows smoke (unmocked platform code)
     runs-on: windows-latest
     steps:
@@ -39,4 +40,17 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install --upgrade pip pytest
       - name: Run Windows smoke tests
-        run: python -m pytest tests/test_smoke_windows.py -v
+        run: python -m pytest tests/test_smoke_platforms.py -v
+
+  macos-smoke:
+    name: macos smoke (unmocked platform code)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest
+      - name: Run macOS smoke tests
+        run: python -m pytest tests/test_smoke_platforms.py -v
