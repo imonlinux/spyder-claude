@@ -1,5 +1,7 @@
 # spyder-claude
 
+[![CI](https://github.com/imonlinux/spyder-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/imonlinux/spyder-claude/actions/workflows/ci.yml)
+
 A [Spyder IDE](https://www.spyder-ide.org/) plugin that lets you query Claude from a dockable panel inside the IDE.
 
 Queries are handled by the [Claude Code CLI](https://claude.ai/code), so the plugin inherits your full Claude configuration — including any MCP servers you have connected.
