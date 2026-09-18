@@ -1,6 +1,7 @@
 # spyder-claude
 
 [![CI](https://github.com/imonlinux/spyder-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/imonlinux/spyder-claude/actions/workflows/ci.yml)
+[![PyPI downloads](https://img.shields.io/pepy/dt/spyder-claude)](https://pepy.tech/projects/spyder-claude)
 
 A [Spyder IDE](https://www.spyder-ide.org/) plugin that lets you query Claude from a dockable panel inside the IDE.
 
