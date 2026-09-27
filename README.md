@@ -201,19 +201,40 @@ the note in the Spyder dialog) and is not advised for API keys.
 
 ## Release Notes
 
-### Unreleased
+### Version 0.3.2 (2026-09-27)
 
 **Fixed:**
 - 🔒 **Secure API key storage now actually works:** the 0.3.0 secure-storage
   scheme was never wired up, so keys typed in Preferences were still saved as
-  plaintext in the config file. The API key field now uses Spyder's native
-  secure storage (system keyring via `keyring`), and a startup migration moves
-  any existing plaintext key into secure storage automatically.
+  plaintext in the config file. The API key field now uses the system keyring
+  (Windows Credential Manager / macOS Keychain / Linux Secret Service), and a
+  startup migration moves any existing plaintext key into the keyring
+  automatically.
+- 🛡️ **Keyring-less systems handled safely:** without a keyring backend the
+  migration skips cleanly (no more modal dialog at startup), a failed keyring
+  write never deletes the plaintext key, and reads fall back to the config
+  file so the key keeps working.
 - 📖 Feature matrix and notes corrected: API mode is single-turn and has no
   tool use, approval prompts, or MCP servers
+
+**Changed:**
 - ⚙️ Preferences: the API key, base URL, and model fields are now visible in
   CLI mode too (they are used by both modes); only the CLI binary path is
   mode-specific
+- 🧹 Removed dead code (unused `--allowedTools` plumbing, no-op parser branch,
+  unused `api_key_security.py` / `migration.py`)
+
+**Added:**
+- 🧪 Tests for the stream-JSON parser and the key-migration write path
+- 📖 README guide for enabling keyring access on Flatpak installs
+
+### Version 0.3.1 (2026-09-04)
+
+- 🪟 Windows: permission helper installed under `%LOCALAPPDATA%\spyder-claude`
+  and the mcp-config no longer hardcodes `python3` (fixes approval prompts
+  never appearing)
+- 🤖 CI: test matrix (Linux/Windows/macOS, Python 3.9 & 3.13) plus unmocked
+  Windows/macOS smoke jobs
 
 ### Version 0.3.0 (2026-05-04)
 
