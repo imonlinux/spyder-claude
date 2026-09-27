@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import platform
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,15 @@ from typing import Optional
 from .encryption import EncryptionManager
 
 logger = logging.getLogger(__name__)
+
+
+def _windows_app_data_dir() -> Path:
+    """Roaming app-data directory, expanding the fallback explicitly.
+
+    ``Path`` does not expand ``~``, so a bare ``'~'`` default would create a
+    literal ``./~/`` directory relative to the current working directory.
+    """
+    return Path(os.environ.get("APPDATA") or Path.home())
 
 
 class SecureStorage(abc.ABC):
@@ -203,7 +213,7 @@ class WindowsSecureStorage(SecureStorage):
             )
 
             # Store in registry or file
-            storage_dir = Path(os.environ.get('APPDATA', '~')) / "spyder-claude"
+            storage_dir = _windows_app_data_dir() / "spyder-claude"
             storage_dir.mkdir(parents=True, exist_ok=True)
             key_file = storage_dir / f"{key}.dpapi"
 
@@ -221,7 +231,7 @@ class WindowsSecureStorage(SecureStorage):
             return self._fallback.retrieve(key)
 
         try:
-            storage_dir = Path(os.environ.get('APPDATA', '~')) / "spyder-claude"
+            storage_dir = _windows_app_data_dir() / "spyder-claude"
             key_file = storage_dir / f"{key}.dpapi"
 
             if not key_file.exists():
@@ -250,7 +260,7 @@ class WindowsSecureStorage(SecureStorage):
             return self._fallback.delete(key)
 
         try:
-            storage_dir = Path(os.environ.get('APPDATA', '~')) / "spyder-claude"
+            storage_dir = _windows_app_data_dir() / "spyder-claude"
             key_file = storage_dir / f"{key}.dpapi"
 
             if key_file.exists():
@@ -277,17 +287,16 @@ class MacOSSecureStorage(SecureStorage):
             self._fallback = EncryptedFileStorage()
             return
 
-        # Check if security command is available
-        try:
-            import subprocess
-            result = subprocess.run(['security', '-h'],
-                                  capture_output=True,
-                                  timeout=5)
-            self._available = result.returncode == 0
-        except Exception:
+        # Check if the security CLI exists. Do NOT probe it with a flag like
+        # `-h`: `security` prints usage and exits non-zero for help flags on
+        # current macOS, which would wrongly push every user to the file
+        # fallback. The binary always ships at /usr/bin/security.
+        if shutil.which("security") is None:
             logger.warning("macOS keychain not available, falling back to encrypted file storage")
             self._available = False
             self._fallback = EncryptedFileStorage()
+        else:
+            self._available = True
 
     def store(self, key: str, value: str) -> bool:
         """Store value in macOS Keychain."""

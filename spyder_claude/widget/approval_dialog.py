@@ -180,5 +180,7 @@ class ApprovalDialog(QDialog):
         decision is one of ALLOW_ONCE, ALLOW_ALWAYS, DENY.
         """
         dlg = cls(tool_name, tool_input, parent)
-        dlg.exec_()
+        # PyQt5/PyQt6/PySide6 expose exec(); old PySide2 only exec_().
+        exec_method = getattr(dlg, "exec", None) or dlg.exec_
+        exec_method()
         return dlg.decision, tool_input

@@ -14,11 +14,54 @@ from spyder.api.plugins import Plugins, SpyderDockablePlugin
 from spyder.api.translations import _
 from spyder.utils.icon_manager import ima
 
-from .config import CONF_DEFAULTS, CONF_SECTION, CONF_VERSION
+from .config import CONF_DEFAULTS, CONF_SECTION, CONF_VERSION, LEGACY_SECURE_PLACEHOLDER
+from .secure_conf import keyring_backend_available, keyring_write
 from .widget.main_widget import ClaudeMainWidget
 from .widget.preferences import ClaudeConfigPage
 
 logger = logging.getLogger(__name__)
+
+# Keys of this length class are always API keys, never accidental matches.
+_MIN_API_KEY_LENGTH = 20
+
+
+def migrate_plaintext_api_key(
+    get_conf_func, set_conf_func, remove_conf_func
+) -> str:
+    """Move a plaintext ``api_key`` config value into keyring storage.
+
+    ``set_conf_func`` must raise on failure. The plaintext is removed only
+    after the secure write has returned successfully, so a failed write can
+    never delete the only copy of the key.
+
+    Returns a status string: ``"migrated"``, ``"empty"``, ``"skipped"`` or
+    ``"failed:<reason>"``. The ``skipped`` case covers the placeholder written
+    by pre-0.3.2 builds, whose own secure-storage scheme never stored the key
+    anywhere recoverable — the user must re-enter it.
+    """
+    value = get_conf_func() or ""
+    if not value.strip():
+        return "empty"
+    if value == LEGACY_SECURE_PLACEHOLDER:
+        logger.warning(
+            "Config contains the obsolete %r placeholder, which was never "
+            "backed by actual storage. Please re-enter your API key in "
+            "Preferences → Claude.",
+            LEGACY_SECURE_PLACEHOLDER,
+        )
+        return "skipped"
+    if len(value.strip()) < _MIN_API_KEY_LENGTH:
+        logger.warning(
+            "Config api_key value is too short to be an API key; leaving it "
+            "untouched."
+        )
+        return "skipped"
+    try:
+        set_conf_func(value)
+        remove_conf_func()
+    except Exception as exc:
+        return f"failed:{exc}"
+    return "migrated"
 
 
 class SpyderClaude(SpyderDockablePlugin):
@@ -56,6 +99,7 @@ class SpyderClaude(SpyderDockablePlugin):
         widget.sig_editor_content_requested.connect(
             self._provide_editor_content
         )
+        self._migrate_plaintext_api_key()
 
     @on_plugin_available(plugin=Plugins.Preferences)
     def on_preferences_available(self):
@@ -73,6 +117,38 @@ class SpyderClaude(SpyderDockablePlugin):
             widget.shutdown()
 
     # ---- Private API -------------------------------------------------------
+
+    def _migrate_plaintext_api_key(self):
+        """Move a plaintext API key from the config file into the keyring.
+
+        Uses the keyring directly rather than ``set_conf(..., secure=True)``:
+        Spyder's CONF only reports a missing keyring backend via a modal
+        dialog and then continues, which would let the migration delete the
+        plaintext key even though nothing was stored. Here a failed write
+        raises, the migration aborts, and the key stays in the config file.
+        """
+        if not keyring_backend_available():
+            logger.warning(
+                "No system keyring backend is available; the API key stays "
+                "in the config file and will still be used. Install a "
+                "Secret Service provider (gnome-keyring/KWallet) or the "
+                "keyrings.alt package to enable secure storage."
+            )
+            return
+
+        status = migrate_plaintext_api_key(
+            get_conf_func=lambda: self.get_conf("api_key", default=""),
+            set_conf_func=lambda v: keyring_write(CONF_SECTION, "api_key", v),
+            remove_conf_func=lambda: self.remove_conf("api_key"),
+        )
+        if status == "migrated":
+            logger.info("Moved plaintext API key into the system keyring")
+        elif status.startswith("failed:"):
+            logger.warning(
+                "Could not store the API key in the system keyring (%s); "
+                "it has been left in the config file and will still be used.",
+                status.split(":", 1)[1],
+            )
 
     def _provide_editor_content(self):
         """Fetch the active editor file and hand it to the widget."""

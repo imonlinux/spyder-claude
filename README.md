@@ -56,10 +56,10 @@ Open **Tools → Preferences → Claude** and set:
 
 | Setting | Description |
 |---|---|
-| Anthropic API key | Your API key (securely stored using platform credential manager, masked in UI). Leave blank if you use `claude login`. |
-| API base URL | Base URL for the API endpoint. Default: `https://api.anthropic.com`. Use alternative providers like z.ai by changing this. |
-| Path to claude binary | Full path to the `claude` executable, e.g. `/home/user/.npm-global/bin/claude` |
-| Model name | Model name to use. Anthropic: `opus`, `sonnet`, `haiku`. z.ai: `zai:glm-5.1`, `zai:glm-4.5`. Enter any model name supported by your provider. |
+| Anthropic API key | Your API key. Required for API mode; optional in CLI mode (leave blank to use `claude login`). Stored in your system credential manager via Spyder's secure storage — not in the config file. Keys saved by older versions are migrated automatically on startup. |
+| API base URL | Base URL for the API endpoint. Default: `https://api.anthropic.com`. Use alternative providers like z.ai by changing this. Used in both CLI and API mode. |
+| Path to claude binary | Full path to the `claude` executable, e.g. `/home/user/.npm-global/bin/claude` (CLI mode only) |
+| Model name | Model name to use in both modes. Anthropic: `opus`, `sonnet`, `haiku`. z.ai: `zai:glm-5.1`, `zai:glm-4.5`. Enter any model name supported by your provider. |
 | System prompt | Optional text appended to Claude's default system prompt |
 
 ## Usage
@@ -79,7 +79,7 @@ In **CLI mode**, conversations automatically persist across Spyder restarts. Whe
 
 Click **New Chat** to start a fresh conversation when needed.
 
-**Note:** Session persistence is only available in CLI mode. API mode maintains conversation context during the IDE session but does not persist across restarts due to Anthropic API SDK architecture.
+**Note:** Session persistence is only available in CLI mode. API mode is stateless: each query is an independent request with no memory of previous queries. Use CLI mode for multi-turn conversations.
 
 ## Platform Support
 
@@ -92,6 +92,77 @@ spyder-claude is cross-platform and works on:
 | **Windows** | ✅ Fully supported | Native CLI mode, approval prompts work correctly |
 
 **All platforms:** API mode works identically across platforms using the Anthropic Python SDK.
+
+### Troubleshooting
+
+**"It was not possible to save a configuration setting securely"**
+
+This Spyder dialog appears when no system keyring backend is reachable (most
+commonly a Flatpak Spyder that cannot talk to the host's keyring daemon).
+spyder-claude detects this and falls back to storing the API key in the
+Spyder config file, so the plugin keeps working — but for real secure
+storage, follow the steps below.
+
+#### Enabling secret storage on Flatpak installs
+
+On Linux, "the system keyring" means the **Secret Service** D-Bus API,
+provided on the host by either **gnome-keyring** (GNOME and most desktop
+spins) or **KWallet** (KDE/Plasma) — both implement the same API, and only
+one can own it per session. A Flatpak sandbox must be explicitly allowed to
+talk to it.
+
+1. **Check the host provides the service:**
+
+   ```bash
+   busctl --user list | grep -i secrets
+   ```
+
+   No output means no provider is running. Install one:
+
+   ```bash
+   sudo dnf install gnome-keyring    # Fedora-family; usually preinstalled
+   ```
+
+   On KDE, `kwalletd` ships with Plasma and provides the same interface.
+   The keyring must also be *unlocked* — with PAM integration it unlocks at
+   login (default on Fedora desktops).
+
+2. **Grant the Spyder Flatpak access (one-time):**
+
+   ```bash
+   flatpak override --user --talk-name=org.freedesktop.secrets org.spyder_ide.spyder
+   ```
+
+3. **Verify the round-trip inside the sandbox:**
+
+   ```bash
+   flatpak run --command=python3 org.spyder_ide.spyder -c \
+     "import keyring; print(keyring.get_keyring()); keyring.set_password('spyder_claude','probe','ok'); print(keyring.get_password('spyder_claude','probe')); keyring.delete_password('spyder_claude','probe')"
+   ```
+
+   Success looks like `keyring.backends.SecretService.Keyring (priority: 5)`
+   followed by `ok`. If you see `keyring.backends.fail.Keyring`, the daemon
+   is missing (step 1) or locked — unlock it once (e.g. in seahorse under
+   "Login") or log out and back in.
+
+4. **Fully restart Spyder.** A plaintext API key saved earlier (while no
+   backend was reachable) is migrated into the keyring automatically on
+   startup and removed from the config file. Verify out of band, from the
+   host:
+
+   ```bash
+   sudo dnf install libsecret    # provides secret-tool
+   secret-tool lookup service spyder_claude username api_key   # prints the key
+   grep -i api_key ~/.var/app/org.spyder_ide.spyder/config/spyder-py3/spyder.ini   # no match = clean
+   ```
+
+   (The key is stored under service `spyder_claude`, username `api_key`; in
+   seahorse it appears in the "Login" keyring as "Password for 'api_key' on
+   'spyder_claude'".)
+
+As a last resort, installing `keyrings.alt` into the Flatpak environment
+also provides a backend — but it is a non-recommended, file-based one (see
+the note in the Spyder dialog) and is not advised for API keys.
 
 ### Platform-Specific Notes
 
@@ -113,10 +184,11 @@ spyder-claude is cross-platform and works on:
 | Feature | CLI Mode | API Mode |
 |---|---|---|
 | Streaming responses | ✅ | ✅ |
-| Multi-turn conversations | ✅ | ✅ |
+| Multi-turn conversations | ✅ | ❌ (each query is independent) |
+| Tool use | ✅ | ❌ |
 | MCP server support | ✅ | ❌ (Planned) |
-| Approval UI prompts | ✅ | ✅ |
-| Session-based whitelisting | ✅ | ✅ |
+| Approval UI prompts | ✅ | ❌ (no tool use to approve) |
+| Session-based whitelisting | ✅ | ❌ |
 | Session persistence (across restarts) | ✅ | ❌ |
 | Secure API key storage | ✅ | ✅ |
 | Custom API base URL | ✅ | ✅ |
@@ -125,9 +197,23 @@ spyder-claude is cross-platform and works on:
 
 **Key Differences:**
 - **CLI Mode:** Uses your existing `claude` CLI configuration. Inherits all connected MCP servers, profiles, and settings. Conversations persist across IDE restarts using Claude CLI's `--resume` parameter.
-- **API Mode:** Direct Anthropic API integration with SDK. Faster startup, no subprocess overhead. Currently does not support MCP servers. Session persistence is limited to current IDE session (API SDK doesn't expose session IDs).
+- **API Mode:** Direct Anthropic API integration with SDK. Faster startup, no subprocess overhead. Each query is an independent single-turn request — no conversation memory, tool use, or MCP servers. Use CLI mode for multi-turn and MCP workflows.
 
 ## Release Notes
+
+### Unreleased
+
+**Fixed:**
+- 🔒 **Secure API key storage now actually works:** the 0.3.0 secure-storage
+  scheme was never wired up, so keys typed in Preferences were still saved as
+  plaintext in the config file. The API key field now uses Spyder's native
+  secure storage (system keyring via `keyring`), and a startup migration moves
+  any existing plaintext key into secure storage automatically.
+- 📖 Feature matrix and notes corrected: API mode is single-turn and has no
+  tool use, approval prompts, or MCP servers
+- ⚙️ Preferences: the API key, base URL, and model fields are now visible in
+  CLI mode too (they are used by both modes); only the CLI binary path is
+  mode-specific
 
 ### Version 0.3.0 (2026-05-04)
 

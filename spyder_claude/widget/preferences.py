@@ -6,10 +6,12 @@
 
 import os
 
-from qtpy.QtWidgets import QCheckBox, QGroupBox, QLineEdit, QVBoxLayout, QWidget
+from qtpy.QtWidgets import QGroupBox, QVBoxLayout, QWidget
 
 from spyder.api.preferences import PluginConfigPage
 from spyder.api.translations import _
+
+from ..secure_conf import keyring_backend_available
 
 
 class ClaudeConfigPage(PluginConfigPage):
@@ -37,17 +39,27 @@ class ClaudeConfigPage(PluginConfigPage):
         auth_group = QGroupBox(_("API Configuration"))
         self.auth_group = auth_group
 
+        # Without a keyring backend a password=True field cannot be stored
+        # (Spyder's secure save only pops an error dialog and keeps nothing)
+        # and cannot even be loaded back. Fall back to a plain field stored
+        # in the config file instead.
+        self._keyring_ok = keyring_backend_available()
         api_key_widget = self.create_lineedit(
             _("Anthropic API key"),
             "api_key",
             tip=_(
                 "Your Anthropic API key. "
-                "Required when using API mode. "
-                "WARNING: stored in plaintext in Spyder's local configuration "
-                "file."
+                "Required when using API mode; optional in CLI mode (leave "
+                "blank to use `claude login`). "
+                + (
+                    "Stored in your system keyring."
+                    if self._keyring_ok
+                    else "NOTE: no system keyring backend was detected, so "
+                    "the key will be stored in the Spyder config file."
+                )
             ),
+            password=self._keyring_ok,
         )
-        api_key_widget.textbox.setEchoMode(QLineEdit.Password)
         self.api_key_widget = api_key_widget
 
         base_url_widget = self.create_lineedit(
@@ -155,13 +167,8 @@ class ClaudeConfigPage(PluginConfigPage):
 
     def _on_mode_changed(self, use_cli: bool):
         """Show/hide fields based on integration mode."""
-        if use_cli:
-            # CLI mode: show CLI path, hide API and model fields
-            self.cli_group.setVisible(True)
-            self.auth_group.setVisible(False)
-            self.model_group.setVisible(False)
-        else:
-            # API mode: show API fields and model, hide CLI path
-            self.cli_group.setVisible(False)
-            self.auth_group.setVisible(True)
-            self.model_group.setVisible(True)
+        # The API key, base URL, and model are all consumed in BOTH modes
+        # (the CLI worker forwards them as ANTHROPIC_API_KEY /
+        # ANTHROPIC_BASE_URL and --model), so they stay visible either way.
+        # Only the CLI binary path is CLI-specific.
+        self.cli_group.setVisible(use_cli)

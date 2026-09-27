@@ -22,3 +22,8 @@ CONF_DEFAULTS = [
 ]
 
 CONF_VERSION = "1.0.0"
+
+# Value older builds wrote into the config instead of the real key. Their
+# secure-storage scheme was never wired up, so nothing is actually stored
+# behind it and users seeing this must re-enter their key.
+LEGACY_SECURE_PLACEHOLDER = "SECURE:stored"

@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Optional, Set
 
 from anthropic import Anthropic
 from qtpy.QtCore import QMutex, QMutexLocker, QObject, QThread, Qt, Signal, Slot
-from qtpy.QtGui import QKeySequence
+from qtpy.QtGui import QKeySequence, QTextCursor
 from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -39,7 +39,6 @@ from .approval_dialog import ALLOW_ALWAYS, ALLOW_ONCE, DENY, ApprovalDialog
 from .approval_server import ApprovalServer
 from ..session import SessionManager
 from ..secure_storage import create_secure_storage
-from ..api_key_security import APIKeySecurity, SECURE_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +183,28 @@ def _host_visible_path(inside_path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# API key resolution
+# ---------------------------------------------------------------------------
+
+def resolve_api_key(secure_get, plain_get) -> str:
+    """Pick the API key: keyring value wins, config-file value as fallback.
+
+    The fallback covers systems without a keyring backend (where the key can
+    only live in the config file) and keyring read failures.
+    """
+    try:
+        value = secure_get()
+        if value:
+            return value
+    except Exception:
+        logger.debug(
+            "Secure storage read failed; using config-file API key",
+            exc_info=True,
+        )
+    return plain_get() or ""
+
+
 class _ClaudeAPIWorker(QObject):
     """Worker for direct Anthropic API calls using the SDK.
 
@@ -257,6 +278,77 @@ class _ClaudeAPIWorker(QObject):
             self.sig_finished.emit()
 
 
+# ---------------------------------------------------------------------------
+# Stream-json event parsing
+# ---------------------------------------------------------------------------
+
+def _parse_stream_event(line: str) -> list:
+    """Parse one stream-json line into ``(signal_name, args_tuple)`` emissions.
+
+    Module-level and pure so it can be tested without Qt. Returns events in
+    wire order; an empty list means the line carries nothing to display.
+    """
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(event, dict):
+        return []
+
+    etype = event.get("type")
+    events: list = []
+
+    if etype == "stream_event":
+        inner = event.get("event", {})
+        itype = inner.get("type")
+
+        if itype == "content_block_delta":
+            delta = inner.get("delta", {})
+            if delta.get("type") == "text_delta":
+                text = delta.get("text", "")
+                if text:
+                    events.append(("sig_chunk", (text,)))
+
+        elif itype == "content_block_start":
+            block = inner.get("content_block", {})
+            if block.get("type") == "tool_use":
+                events.append((
+                    "sig_tool_use",
+                    (block.get("name", "tool"), block.get("input") or {}),
+                ))
+
+    elif etype == "user":
+        # Tool results come back as a user message with tool_result blocks.
+        message = event.get("message", {})
+        for block in message.get("content", []) or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_result":
+                content = block.get("content", "")
+                if isinstance(content, list):
+                    parts = [
+                        str(c.get("text", ""))
+                        for c in content
+                        if isinstance(c, dict)
+                    ]
+                    text = "\n".join(p for p in parts if p)
+                else:
+                    text = str(content or "")
+                is_error = bool(block.get("is_error"))
+                if text:
+                    events.append(("sig_tool_result", (text, is_error)))
+
+    elif etype == "result":
+        if event.get("is_error"):
+            events.append(("sig_error", (event.get("result", "Unknown error"),)))
+        session_id = event.get("session_id", "")
+        if session_id:
+            events.append(("sig_session_id", (session_id,)))
+
+    return events
+
+
 class _ClaudeWorker(QObject):
     """Runs a claude CLI call in a background QThread.
 
@@ -287,7 +379,6 @@ class _ClaudeWorker(QObject):
         self._system_prompt = ""
         self._session_id = ""
         self._perm_config: Optional[Dict[str, Any]] = None
-        self._allowed_tools: list = []
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
         self._mcp_config_path: Optional[Path] = None
@@ -302,7 +393,6 @@ class _ClaudeWorker(QObject):
         system_prompt: str,
         session_id: str = "",
         perm_config: Optional[Dict[str, Any]] = None,
-        allowed_tools: Optional[list] = None,
     ) -> None:
         self._prompt = prompt
         self._api_key = api_key
@@ -312,7 +402,6 @@ class _ClaudeWorker(QObject):
         self._system_prompt = system_prompt
         self._session_id = session_id
         self._perm_config = perm_config
-        self._allowed_tools = list(allowed_tools or [])
 
     @Slot()
     def cancel(self) -> None:
@@ -356,9 +445,6 @@ class _ClaudeWorker(QObject):
                 logger.exception("Failed to configure permission-prompt tool")
                 # Fall through without approvals — the user will see silent
                 # denials surfaced as tool_result errors.
-
-        if self._allowed_tools:
-            cmd.extend(["--allowedTools", ",".join(self._allowed_tools)])
 
         if self._session_id:
             cmd.extend(["--resume", self._session_id])
@@ -502,71 +588,8 @@ class _ClaudeWorker(QObject):
     # ---- Stream-json event handling ---------------------------------------
 
     def _handle_event(self, line: str) -> None:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            return
-
-        etype = event.get("type")
-
-        if etype == "stream_event":
-            inner = event.get("event", {})
-            itype = inner.get("type")
-
-            if itype == "content_block_delta":
-                delta = inner.get("delta", {})
-                if delta.get("type") == "text_delta":
-                    text = delta.get("text", "")
-                    if text:
-                        self.sig_chunk.emit(text)
-
-            elif itype == "content_block_start":
-                block = inner.get("content_block", {})
-                if block.get("type") == "tool_use":
-                    self.sig_tool_use.emit(
-                        block.get("name", "tool"),
-                        block.get("input") or {},
-                    )
-
-        elif etype == "assistant":
-            # Fallback: some content blocks (notably tool_use) arrive fully
-            # formed on the "assistant" message rather than via stream_event.
-            message = event.get("message", {})
-            for block in message.get("content", []) or []:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    # Avoid duplicating a tool_use we already announced from
-                    # content_block_start — but announcing twice is harmless
-                    # and better than silently losing it on providers that
-                    # don't emit low-level stream events.
-                    pass
-
-        elif etype == "user":
-            # Tool results come back as a user message with tool_result blocks.
-            message = event.get("message", {})
-            for block in message.get("content", []) or []:
-                if not isinstance(block, dict):
-                    continue
-                if block.get("type") == "tool_result":
-                    content = block.get("content", "")
-                    if isinstance(content, list):
-                        parts = [
-                            str(c.get("text", ""))
-                            for c in content
-                            if isinstance(c, dict)
-                        ]
-                        text = "\n".join(p for p in parts if p)
-                    else:
-                        text = str(content or "")
-                    is_error = bool(block.get("is_error"))
-                    if text:
-                        self.sig_tool_result.emit(text, is_error)
-
-        elif etype == "result":
-            if event.get("is_error"):
-                self.sig_error.emit(event.get("result", "Unknown error"))
-            session_id = event.get("session_id", "")
-            if session_id:
-                self.sig_session_id.emit(session_id)
+        for signal_name, args in _parse_stream_event(line):
+            getattr(self, signal_name).emit(*args)
 
 
 # ---------------------------------------------------------------------------
@@ -659,18 +682,15 @@ class ClaudeMainWidget(PluginMainWidget):
         try:
             secure_storage = create_secure_storage()
             self.session_manager = SessionManager(secure_storage)
-            self.api_key_security = APIKeySecurity(secure_storage)
             self._restore_session()  # Restore previous session if available
             logger.info("Session manager initialized successfully")
         except ImportError as e:
             logger.error(f"Failed to import security modules: {e}")
             logger.error("Try: flatpak run --command=python3 org.spyder_ide.spyder -m pip install cryptography>=41.0.0")
             self.session_manager = None
-            self.api_key_security = None
         except Exception as e:
             logger.error(f"Failed to initialize session manager: {e}")
             self.session_manager = None
-            self.api_key_security = None
 
         # --- Approval server ---
         # Lazily started on first query so a broken network stack doesn't
@@ -846,30 +866,14 @@ class ClaudeMainWidget(PluginMainWidget):
             except Exception as e:
                 logger.warning(f"Failed to clear persisted session: {e}")
 
-    def _load_api_key(self, config_value: str) -> str:
-        """Load API key from config or secure storage.
-
-        Args:
-            config_value: Value from Spyder config (may be SECURE:stored placeholder)
-
-        Returns:
-            Actual API key string
-        """
-        # If we have secure storage and the config contains the placeholder
-        if self.api_key_security and config_value == SECURE_PLACEHOLDER:
-            try:
-                secure_key = self.api_key_security.retrieve_api_key()
-                if secure_key:
-                    return secure_key
-                else:
-                    logger.warning("Secure storage placeholder found but no key in storage")
-                    return ""
-            except Exception as e:
-                logger.error(f"Failed to load API key from secure storage: {e}")
-                return ""
-
-        # Otherwise return the config value as-is (plaintext or empty)
-        return config_value
+    def _load_api_key(self) -> str:
+        """Load the API key from the keyring, falling back to the config."""
+        return resolve_api_key(
+            secure_get=lambda: self.get_conf(
+                "api_key", default="", secure=True
+            ),
+            plain_get=lambda: self.get_conf("api_key", default=""),
+        )
 
     def _run_query(self, prompt: str) -> None:
         with QMutexLocker(self._query_mutex):
@@ -889,8 +893,7 @@ class ClaudeMainWidget(PluginMainWidget):
                 self._current_worker = None
 
             use_cli = self.get_conf("use_cli", default=True)
-            api_key_config = self.get_conf("api_key", default="")
-            api_key = self._load_api_key(api_key_config)  # Load from secure storage if needed
+            api_key = self._load_api_key()
             base_url = self.get_conf(
                 "base_url", default="https://api.anthropic.com"
             )
@@ -941,7 +944,8 @@ class ClaudeMainWidget(PluginMainWidget):
 
     def _append_text(self, text: str) -> None:
         cursor = self._response_area.textCursor()
-        cursor.movePosition(cursor.End)
+        # Scoped enum form: unscoped QTextCursor.End was removed in PyQt6.
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(text)
         self._response_area.setTextCursor(cursor)
         self._response_area.ensureCursorVisible()

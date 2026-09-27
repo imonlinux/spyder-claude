@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Secure API key storage** — the v0.3.0 secure-storage scheme (migration
+  manager, `SECURE:stored` placeholder, custom Fernet layer) was never wired
+  into the plugin: keys typed into Preferences were still written to Spyder's
+  config file as plaintext. The API key preference now uses the system
+  keyring (`keyring` → Windows Credential Manager / macOS Keychain / Linux
+  Secret Service), and on startup any plaintext key found in the config is
+  moved into the keyring and removed from the config file.
+  A key left behind by v0.3.0–0.3.1 as the `SECURE:stored` placeholder was
+  never actually stored and must be re-entered (the plugin logs a warning).
+- **Systems without a keyring backend** are handled gracefully instead of
+  popping Spyder's "It was not possible to save a configuration setting
+  securely" dialog on every startup: the migration checks for a usable
+  backend first, writes to the keyring directly (so a failed write aborts
+  instead of deleting the plaintext original), and falls back to keeping the
+  key in the config file, where it is still used. The Preferences field
+  likewise stores into the config file when no backend is available.
+- Documentation drift: the README claimed API mode maintains conversation
+  context and supports approval prompts — in reality each API query is an
+  independent single-turn request with no tool use. Feature matrix corrected.
+
+### Changed
+- Preferences page: the API key, base URL, and model fields are shown in both
+  CLI and API mode (all three are consumed by both code paths); only the
+  claude binary path is CLI-specific.
+- Removed dead code: the unused `--allowedTools` plumbing on the CLI worker,
+  the no-op `assistant` branch of the stream-JSON parser, and the unused
+  `api_key_security.py` / `migration.py` modules.
+
+### Added
+- README guide for enabling keyring access on Flatpak installs (Secret
+  Service provider check, `flatpak override` grant, sandbox round-trip
+  verification, and out-of-band key checks)
+- Tests for the stream-JSON event parser (`_parse_stream_event`, 20 cases)
+  and for the plaintext-key migration write path (7 cases)
+- macOS keychain detection no longer probes `security -h`, which exits
+  non-zero on current macOS and silently pushed users to the weak file
+  storage fallback; it now checks for the binary's existence
+- Windows DPAPI storage no longer creates a literal `~/` directory when
+  `APPDATA` is unset; PyQt6 compatibility fixes for the approval dialog
+  (`exec()`) and text-cursor enum access
+
 ## [0.3.1] - 2026-09-04
 
 ### Fixed

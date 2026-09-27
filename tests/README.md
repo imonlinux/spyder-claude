@@ -7,7 +7,10 @@ This directory contains the test suite for the spyder-claude plugin.
 - `test_config.py` - Tests for configuration defaults and loading
 - `test_platform_utils.py` - Tests for platform detection and helper script bootstrap
 - `test_plugin.py` - Tests for the main SpyderClaude plugin class
+- `test_plugin_migration.py` - Tests for the plaintext API key → keyring migration
+- `test_handle_event.py` - Tests for claude CLI stream-JSON event parsing
 - `test_approval.py` - Tests for approval dialog and server components
+- `test_smoke_platforms.py` - Unmocked platform tests (run on real Windows/macOS in CI)
 - `conftest.py` - Pytest fixtures and configuration
 
 ## Running Tests
@@ -51,22 +54,29 @@ The test suite covers:
    - Path translation for sandbox escape
    - Helper script bootstrap
 
-3. **Plugin** (`test_plugin.py`)
+3. **Plugin / Migration** (`test_plugin.py`, `test_plugin_migration.py`)
    - Plugin metadata and dependencies
-   - Initialization and configuration
-   - Editor content integration
-   - Shutdown handling
+   - Plaintext API key → keyring migration (empty, placeholder, valid,
+     failure cases) and its wiring into the plugin startup path
 
 4. **Approval System** (`test_approval.py`)
    - Approval dialog constants
    - Dialog component initialization
    - Approval server component
 
+5. **Stream-JSON parsing** (`test_handle_event.py`)
+   - Text delta streaming, tool-use announcements, tool results
+   - Session-id and error propagation from result events
+   - Malformed / non-object JSON lines are ignored safely
+
 ## Notes
 
-- Tests use mocking to avoid requiring a running Qt display
-- Some tests may not run correctly without a full Spyder environment
-- Integration tests for CLI mode and API mode require the actual `claude` binary
+- Tests use mocking to avoid requiring a running Qt display. Because the
+  Spyder API is mocked, classes whose bases come from Spyder/Qt (e.g.
+  `ClaudeMainWidget`, the workers) become MagicMocks themselves; testable
+  logic therefore lives in module-level functions (e.g. `_parse_stream_event`,
+  `migrate_plaintext_api_key`) and is tested directly.
+- Integration tests for CLI mode and API mode require the actual `claude` binary.
 
 ## Future Additions
 
