@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.2] - 2026-09-27
+## [0.3.3] - 2026-11-27
+
+### Fixed
+- The Claude panel now uses Spyder's configured **Interface font** for its
+  response and input areas (previously they fell back to the raw Qt default,
+  which reads as very small on some platforms and ignored Spyder's font
+  preferences entirely). Size is controlled in Preferences → Appearance, and
+  changes apply live — no Spyder restart needed (#2).
 
 ### Fixed
 - **Secure API key storage** — the v0.3.0 secure-storage scheme (migration
