@@ -39,6 +39,7 @@ sys.modules["spyder.api.plugins"].Plugins = mock_plugins
 sys.modules["spyder.api.plugin_registration"] = mock_plugin_registration
 sys.modules["spyder.api.plugin_registration.decorators"] = mock_plugin_registration.decorators
 sys.modules["spyder.api.translations"] = MagicMock()
+sys.modules["spyder.api.fonts"] = MagicMock()
 sys.modules["spyder.api.preferences"] = MagicMock()
 sys.modules["spyder.utils"] = MagicMock()
 sys.modules["spyder.utils.icon_manager"] = MagicMock()

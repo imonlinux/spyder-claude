@@ -6,6 +6,7 @@
 
 import logging
 
+from spyder.api.fonts import SpyderFontType
 from spyder.api.plugin_registration.decorators import (
     on_plugin_available,
     on_plugin_teardown,
@@ -23,6 +24,15 @@ logger = logging.getLogger(__name__)
 
 # Keys of this length class are always API keys, never accidental matches.
 _MIN_API_KEY_LENGTH = 20
+
+
+def update_panel_font(widget, get_font) -> None:
+    """Resolve Spyder's interface font and apply it to the plugin widget.
+
+    Module-level so the delegation stays testable under the headless test
+    suite (the mocked spyder base classes cannot be entered).
+    """
+    widget.apply_fonts(get_font(SpyderFontType.Interface))
 
 
 def migrate_plaintext_api_key(
@@ -115,6 +125,15 @@ class SpyderClaude(SpyderDockablePlugin):
         widget = self.get_widget()
         if widget is not None:
             widget.shutdown()
+
+    def update_font(self):
+        """Apply Spyder's interface font to the panel's text areas.
+
+        Called by Spyder at plugin registration and again whenever the user
+        applies a font change in Preferences → Appearance, so the panel
+        tracks the interface font live without a restart.
+        """
+        update_panel_font(self.get_widget(), self.get_font)
 
     # ---- Private API -------------------------------------------------------
 

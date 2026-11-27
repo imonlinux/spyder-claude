@@ -282,6 +282,15 @@ class _ClaudeAPIWorker(QObject):
 # Stream-json event parsing
 # ---------------------------------------------------------------------------
 
+def apply_font_to_areas(response_area, input_area, font) -> None:
+    """Set ``font`` on the panel's response and input text areas.
+
+    Module-level and pure so the wiring is testable without Qt.
+    """
+    response_area.setFont(font)
+    input_area.setFont(font)
+
+
 def _parse_stream_event(line: str) -> list:
     """Parse one stream-json line into ``(signal_name, args_tuple)`` emissions.
 
@@ -703,6 +712,14 @@ class ClaudeMainWidget(PluginMainWidget):
         pass
 
     # ---- Public API (called by plugin) -------------------------------------
+
+    def apply_fonts(self, font) -> None:
+        """Apply ``font`` to the response and input areas.
+
+        Called by the plugin with Spyder's interface font, so the panel text
+        follows Preferences → Appearance and live font changes.
+        """
+        apply_font_to_areas(self._response_area, self._input_area, font)
 
     def inject_editor_content(self, content: str, filename: str) -> None:
         if content:
